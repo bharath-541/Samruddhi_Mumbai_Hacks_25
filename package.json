@@ -4,7 +4,13 @@
   "description": "Short, actionable steps to provision managed services and prepare the repo for the hackathon MVP.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "DOTENV_CONFIG_PATH=.env.local tsx -r dotenv/config src/server.ts",
+    "seed": "node scripts/seed.js",
+    "typegen": "supabase gen types typescript --project-id $SUPABASE_PROJECT_ID > src/types/supabase.ts",
+    "build": "tsc -p .",
+    "start": "node dist/server.js",
+    "lint": "echo 'no linter configured'",
+    "test": "echo \"(tests pending)\" && exit 0"
   },
   "keywords": [],
   "author": "",
@@ -26,6 +32,7 @@
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.10.1",
