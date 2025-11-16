@@ -1,0 +1,25 @@
+.DS_Store
+node_modules/
+dist/
+build/
+coverage/
+
+# Local env files (never commit real secrets)
+.env
+.env.*
+.env.local
+
+# Vercel
+.vercel/
+
+# Supabase CLI local state/temp
+.supabase/
+supabase/.temp/
+supabase/.branches/
+supabase/.shadow/
+
+# Editors/IDE
+.idea/
+.history/
+*.log
+*.pid
