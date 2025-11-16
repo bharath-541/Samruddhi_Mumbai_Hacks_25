@@ -63,6 +63,26 @@ const ConsentRevokeSchema = z.object({
   consentId: z.string().min(6)
 });
 
+const BedsQuerySchema = z.object({
+  hospitalId: z.string().uuid(),
+  type: z.enum(['general', 'icu', 'nicu', 'picu', 'emergency', 'isolation']).optional(),
+  status: z.enum(['available', 'occupied', 'maintenance', 'reserved']).optional()
+});
+
+const AdmissionsQuerySchema = z.object({
+  hospitalId: z.string().uuid(),
+  active: z.enum(['true', 'false']).optional(),
+  patientId: z.string().uuid().optional(),
+  doctorId: z.string().uuid().optional()
+});
+
+const DoctorsQuerySchema = z.object({
+  hospitalId: z.string().uuid(),
+  departmentId: z.string().uuid().optional(),
+  isOnDuty: z.enum(['true', 'false']).optional(),
+  specialization: z.string().optional()
+});
+
 // Health
 app.get('/health/live', (_req, res) => res.json({ status: 'ok' }));
 app.get('/health/ready', async (_req, res) => {
@@ -164,6 +184,95 @@ app.get('/ehr/patient/:id', requireConsent, async (req, res) => {
   } catch (e: any) {
     req.log.error({ err: e }, 'EHR read failed');
     res.status(500).json({ error: 'EHR read failed' });
+  }
+});
+
+// Beds (read-only, filtered)
+app.get('/beds', async (req, res) => {
+  const parsed = BedsQuerySchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const { hospitalId, type, status } = parsed.data;
+  try {
+    let query = supabase.from('beds').select('*').eq('hospital_id', hospitalId);
+    if (type) query = query.eq('type', type);
+    if (status) query = query.eq('status', status);
+    const { data, error } = await query.order('bed_number');
+    if (error) throw error;
+    res.json(data);
+  } catch (e: any) {
+    req.log.error({ err: e }, 'beds query failed');
+    res.status(500).json({ error: 'Beds query failed' });
+  }
+});
+
+// Hospital capacity summary
+app.get('/hospitals/:id/capacity', async (req, res) => {
+  const hospitalId = req.params.id;
+  try {
+    const { data, error } = await supabase
+      .from('hospitals')
+      .select('id, name, capacity_summary')
+      .eq('id', hospitalId)
+      .single();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Hospital not found' });
+    res.json(data);
+  } catch (e: any) {
+    req.log.error({ err: e }, 'capacity query failed');
+    res.status(500).json({ error: 'Capacity query failed' });
+  }
+});
+
+// Doctors (read-only, filtered)
+app.get('/doctors', async (req, res) => {
+  const parsed = DoctorsQuerySchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const { hospitalId, departmentId, isOnDuty, specialization } = parsed.data;
+  try {
+    let query = supabase.from('doctors').select('*').eq('hospital_id', hospitalId).eq('is_active', true);
+    if (departmentId) query = query.eq('department_id', departmentId);
+    if (isOnDuty) query = query.eq('is_on_duty', isOnDuty === 'true');
+    if (specialization) query = query.ilike('specialization', `%${specialization}%`);
+    const { data, error } = await query.order('name');
+    if (error) throw error;
+    res.json(data);
+  } catch (e: any) {
+    req.log.error({ err: e }, 'doctors query failed');
+    res.status(500).json({ error: 'Doctors query failed' });
+  }
+});
+
+// Admissions (read-only, filtered)
+app.get('/admissions', async (req, res) => {
+  const parsed = AdmissionsQuerySchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const { hospitalId, active, patientId, doctorId } = parsed.data;
+  try {
+    let query = supabase.from('admissions').select('*').eq('hospital_id', hospitalId);
+    if (active === 'true') query = query.is('discharged_at', null);
+    if (active === 'false') query = query.not('discharged_at', 'is', null);
+    if (patientId) query = query.eq('patient_id', patientId);
+    if (doctorId) query = query.eq('primary_doctor_id', doctorId);
+    const { data, error } = await query.order('admitted_at', { ascending: false });
+    if (error) throw error;
+    res.json(data);
+  } catch (e: any) {
+    req.log.error({ err: e }, 'admissions query failed');
+    res.status(500).json({ error: 'Admissions query failed' });
+  }
+});
+
+// Single admission by ID
+app.get('/admissions/:id', async (req, res) => {
+  const admissionId = req.params.id;
+  try {
+    const { data, error } = await supabase.from('admissions').select('*').eq('id', admissionId).single();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Admission not found' });
+    res.json(data);
+  } catch (e: any) {
+    req.log.error({ err: e }, 'admission fetch failed');
+    res.status(500).json({ error: 'Admission fetch failed' });
   }
 });
 
