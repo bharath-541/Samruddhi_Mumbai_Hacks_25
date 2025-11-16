@@ -1,3 +1,3 @@
-Need to install the following packages:
-supabase@2.58.5
-Ok to proceed? (y) 
+// Placeholder Supabase types. Regenerate with:
+// npx supabase gen types typescript --project-id <PROJECT_ID> > src/types/supabase.ts
+export {};

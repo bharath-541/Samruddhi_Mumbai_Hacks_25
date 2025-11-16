@@ -8,6 +8,9 @@ import pino from 'pino';
 import pinoHttp from 'pino-http';
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
+import { signConsent, verifyConsent } from './lib/jwt';
+import { setConsent, revokeConsent, isConsentValid } from './lib/redis';
+import { requireConsent } from './middleware/consent';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const app = express();
@@ -53,7 +56,7 @@ const ConsentGrantSchema = z.object({
   patientId: z.string().uuid(),
   recipientId: z.string().uuid(),
   scope: z.string().min(3),
-  durationMinutes: z.number().int().positive().max(240)
+  durationDays: z.number().int().positive().max(30).default(7)
 });
 
 const ConsentRevokeSchema = z.object({
@@ -111,28 +114,57 @@ app.patch('/admissions/:id/discharge', async (req, res) => {
   res.json(data);
 });
 
-// Consent grant (stub logic)
+// Consent grant (JWT + Redis TTL)
 app.post('/consent/grant', async (req, res) => {
   const parsed = ConsentGrantSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  // TODO: issue consent JWT & store in Redis
-  res.status(201).json({ stub: true, message: 'Consent grant not yet implemented' });
+  const { patientId, recipientId, scope, durationDays } = parsed.data;
+  try {
+    const exp = Math.floor(Date.now() / 1000) + durationDays * 86400;
+    const jti = crypto.randomUUID();
+    const token = signConsent({ sub: patientId, aud: recipientId, scope, exp, jti });
+    const record = {
+      patientId,
+      recipientId,
+      scope,
+      grantedAt: new Date().toISOString(),
+      expiresAt: new Date(exp * 1000).toISOString(),
+      revoked: false,
+    };
+    await setConsent(jti, record as any, durationDays * 86400);
+    res.status(201).json({ consentId: jti, consentToken: token, expiresAt: record.expiresAt });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'consent grant failed');
+    res.status(500).json({ error: 'Consent grant failed' });
+  }
 });
 
-// Consent revoke (stub)
+// Consent revoke (Redis)
 app.post('/consent/revoke', async (req, res) => {
   const parsed = ConsentRevokeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  // TODO: revoke in Redis
-  res.json({ stub: true, message: 'Consent revoke not yet implemented' });
+  try {
+    const ok = await revokeConsent(parsed.data.consentId);
+    res.json({ revoked: ok });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'consent revoke failed');
+    res.status(500).json({ error: 'Consent revoke failed' });
+  }
 });
 
-// EHR read (stub)
-app.get('/ehr/patient/:id', async (req, res) => {
-  const consentToken = req.header('X-Consent-Token');
-  if (!consentToken) return res.status(401).json({ error: 'Missing consent token' });
-  // TODO: validate staff JWT + consent token + Redis + fetch Mongo record
-  res.json({ stub: true, patientId: req.params.id });
+// EHR read (requires consent middleware)
+app.get('/ehr/patient/:id', requireConsent, async (req, res) => {
+  const patientId = req.params.id;
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+    const record = await db.collection('ehr_records').findOne({ patient_id: patientId });
+    if (!record) return res.status(404).json({ error: 'EHR record not found' });
+    res.json({ access: 'granted', patientId, ehr: record });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'EHR read failed');
+    res.status(500).json({ error: 'EHR read failed' });
+  }
 });
 
 // Global error handler fallback
@@ -143,3 +175,5 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => logger.info({ port }, 'Server listening'));
+
+import crypto from 'node:crypto';

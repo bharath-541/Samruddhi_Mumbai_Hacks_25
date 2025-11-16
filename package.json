@@ -9,6 +9,8 @@
     "typegen": "supabase gen types typescript --project-id $SUPABASE_PROJECT_ID > src/types/supabase.ts",
     "build": "tsc -p .",
     "start": "node dist/server.js",
+    "consent:grant": "node scripts/consent_grant.js",
+    "consent:revoke": "node scripts/consent_revoke.js",
     "lint": "echo 'no linter configured'",
     "test": "echo \"(tests pending)\" && exit 0"
   },

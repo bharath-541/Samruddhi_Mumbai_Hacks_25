@@ -15,7 +15,7 @@ async function seed() {
   try {
     // 1. Create super admin user
     console.log('Creating super admin...');
-    const { error: userError } = await supabase.from('users').insert([
+    const { error: userError } = await supabase.from('users').upsert([
       {
         id: '00000000-0000-0000-0000-000000000001',
         email: 'admin@samruddhi.health',
@@ -23,13 +23,13 @@ async function seed() {
         role: 'super_admin',
         is_active: true
       }
-    ]);
+    ], { onConflict: 'email' });
     if (userError) console.error('User error:', userError.message);
     else console.log('✓ Super admin created');
 
     // 2. Create 3 hospitals
     console.log('\nCreating hospitals...');
-    const { error: hospitalError } = await supabase.from('hospitals').insert([
+    const { error: hospitalError } = await supabase.from('hospitals').upsert([
       {
         id: '11111111-1111-1111-1111-111111111111',
         name: 'Apollo Hospital Mumbai',
@@ -66,13 +66,13 @@ async function seed() {
         admin_user_id: '00000000-0000-0000-0000-000000000001',
         is_active: true
       }
-    ]);
+    ], { onConflict: 'id' });
     if (hospitalError) console.error('Hospital error:', hospitalError.message);
     else console.log('✓ 3 hospitals created');
 
     // 3. Create departments
     console.log('\nCreating departments...');
-    const { error: deptError } = await supabase.from('departments').insert([
+    const { error: deptError } = await supabase.from('departments').upsert([
       // Apollo Mumbai
       { id: 'd1111111-1111-1111-1111-111111111111', hospital_id: '11111111-1111-1111-1111-111111111111', name: 'Cardiology', code: 'CARD', floor_number: 3, is_active: true },
       { id: 'd1111111-1111-1111-1111-111111111112', hospital_id: '11111111-1111-1111-1111-111111111111', name: 'Emergency', code: 'EMRG', floor_number: 1, is_active: true },
@@ -84,13 +84,13 @@ async function seed() {
       // Manipal Bangalore
       { id: 'd3333333-3333-3333-3333-333333333331', hospital_id: '33333333-3333-3333-3333-333333333333', name: 'Orthopedics', code: 'ORTH', floor_number: 3, is_active: true },
       { id: 'd3333333-3333-3333-3333-333333333332', hospital_id: '33333333-3333-3333-3333-333333333333', name: 'Pediatrics', code: 'PEDI', floor_number: 2, is_active: true }
-    ]);
+    ], { onConflict: 'hospital_id,code' });
     if (deptError) console.error('Department error:', deptError.message);
     else console.log('✓ 8 departments created');
 
     // 4. Create doctors
     console.log('\nCreating doctors...');
-    const { error: docError } = await supabase.from('doctors').insert([
+    const { error: docError } = await supabase.from('doctors').upsert([
       { id: 'd0c11111-1111-1111-1111-111111111111', hospital_id: '11111111-1111-1111-1111-111111111111', name: 'Dr. Anjali Mehta', license_number: 'MH-DOC-12345', specialization: 'Cardiologist', qualification: ['MBBS','MD'], department_id: 'd1111111-1111-1111-1111-111111111111', contact_phone: '+91-98765-43210', is_on_duty: true, max_patients: 12, is_active: true },
       { id: 'd0c11111-1111-1111-1111-111111111112', hospital_id: '11111111-1111-1111-1111-111111111111', name: 'Dr. Rajesh Kumar', license_number: 'MH-DOC-12346', specialization: 'Emergency Physician', qualification: ['MBBS','DNB'], department_id: 'd1111111-1111-1111-1111-111111111112', contact_phone: '+91-98765-43211', is_on_duty: true, max_patients: 15, is_active: true },
       { id: 'd0c11111-1111-1111-1111-111111111113', hospital_id: '11111111-1111-1111-1111-111111111111', name: 'Dr. Priya Singh', license_number: 'MH-DOC-12347', specialization: 'Intensivist', qualification: ['MBBS','MD','FICCM'], department_id: 'd1111111-1111-1111-1111-111111111113', contact_phone: '+91-98765-43212', is_on_duty: true, max_patients: 8, is_active: true },
@@ -101,7 +101,7 @@ async function seed() {
       { id: 'd0c33333-3333-3333-3333-333333333331', hospital_id: '33333333-3333-3333-3333-333333333333', name: 'Dr. Karthik Reddy', license_number: 'KA-DOC-98765', specialization: 'Orthopedic Surgeon', qualification: ['MBBS','MS Ortho'], department_id: 'd3333333-3333-3333-3333-333333333331', contact_phone: '+91-98765-22221', is_on_duty: true, max_patients: 10, is_active: true },
       { id: 'd0c33333-3333-3333-3333-333333333332', hospital_id: '33333333-3333-3333-3333-333333333333', name: 'Dr. Lakshmi Iyer', license_number: 'KA-DOC-98766', specialization: 'Pediatrician', qualification: ['MBBS','MD Pediatrics'], department_id: 'd3333333-3333-3333-3333-333333333332', contact_phone: '+91-98765-22222', is_on_duty: true, max_patients: 12, is_active: true },
       { id: 'd0c33333-3333-3333-3333-333333333333', hospital_id: '33333333-3333-3333-3333-333333333333', name: 'Dr. Ravi Nair', license_number: 'KA-DOC-98767', specialization: 'Pediatric Surgeon', qualification: ['MBBS','MS'], department_id: 'd3333333-3333-3333-3333-333333333332', contact_phone: '+91-98765-22223', is_on_duty: false, max_patients: 8, is_active: true }
-    ]);
+    ], { onConflict: 'license_number' });
     if (docError) console.error('Doctor error:', docError.message);
     else console.log('✓ 10 doctors created');
 
@@ -148,7 +148,7 @@ async function seed() {
       });
     }
 
-    const { error: bedError } = await supabase.from('beds').insert(beds);
+    const { error: bedError } = await supabase.from('beds').upsert(beds, { onConflict: 'hospital_id,bed_number' });
     if (bedError) console.error('Bed error:', bedError.message);
     else console.log('✓ 150 beds created (50 per hospital)');
 
