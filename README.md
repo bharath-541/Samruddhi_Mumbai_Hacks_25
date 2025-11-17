@@ -1,81 +1,104 @@
-# Samruddhi Backend — Phase 1 (Core + Admissions + Consent)
+# Samruddhi Backend — Hospital Core + Consent System
 
-This README now covers: Day 0–1 completed work and immediate next steps to finish Phase 1 (atomic Admissions + initial Consent/EHR access). Keep it lean and actionable.
+## ✅ Completed (Phase 1)
 
-## What you provide
+**Infrastructure:** Express + TypeScript, Supabase (6 migrations), Upstash Redis, MongoDB Atlas  
+**Core Schema:** users, hospitals, departments, doctors, patients, beds, admissions, audit_logs + RLS  
+**Seed Data:** 3 hospitals, 8 departments, 10 doctors, 150 beds (idempotent script)  
+**Admissions:** Atomic RPCs (create with bed locking, discharge with workload updates) + endpoints  
+**Consent Flow:** JWT grant/revoke + Redis TTL + middleware validation  
+**EHR Access:** GET endpoint with requireConsent guard + MongoDB integration  
+**Read Endpoints:** beds, capacity, doctors, admissions (all with query filters)  
+**Verified:** Redis write/read ✓, MongoDB write/read ✓, RPC dry-run ✓
 
-- Supabase: `project-ref`, `SUPABASE_URL`, `ANON_KEY`, `SERVICE_ROLE` (keep secret)
-- Upstash Redis: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
-- Mongo Atlas: `MONGO_URI` (read-only user ok for MVP)
-- Vercel: project name and preferred region (close to Supabase)
-
-## One-time setup (macOS zsh)
-
-```bash
-# Tools
-brew install supabase/tap/supabase
-npm i -g vercel
-
-# Login to providers (browser prompts)
-supabase login
-vercel login
-```
-
-## Repo setup
+## 🚀 Quick Start
 
 ```bash
-# Copy env template and fill values
-cp .env.example .env.local
-
-# Initialize Supabase project files (creates supabase/)
-supabase init
-supabase link --project-ref <YOUR_PROJECT_REF>
-
-# Create first migration (edit SQL later if needed)
-supabase db migration new init_core
-
-# Push migrations
-# locally (optional)
-supabase db push
-# or remote (recommended once SQL is ready)
-supabase db push --remote
+npm install
+npm run dev          # Start server (port 3000)
+npm run seed         # Load/update seed data
+npm run build        # Compile TypeScript
 ```
 
-## Env vars (Vercel project)
+## 📋 Today's Plan (17 Nov 2025)
 
-Add these variables in Vercel → Settings → Environment Variables:
+### Priority 1: Generate Types & Add Patient Seeds
+- [ ] Run `npx supabase gen types` to generate real Supabase types
+- [ ] Add 10 sample patients to seed script
+- [ ] Link 3-5 patients to admissions via RPC
+- [ ] Verify occupied bed logic works
 
-- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE`
+### Priority 2: Inventory Module (Phase 2 Start)
+- [ ] Create migration: inventory + inventory_transactions tables
+- [ ] Add triggers for stock updates + audit trail
+- [ ] Seed inventory items (medicines, equipment, consumables)
+- [ ] Implement low-stock alert endpoint
+
+### Priority 3: Testing & Quality
+- [ ] Add Vitest + Supertest setup
+- [ ] Write tests for admission endpoints
+- [ ] Write tests for consent flow
+- [ ] Add basic integration tests
+
+### Priority 4: Observability
+- [ ] Add Sentry integration
+- [ ] Structured logging with request IDs
+- [ ] Add `/metrics` endpoint for monitoring
+- [ ] Rate limiting on public endpoints
+
+## 📚 Docs
+
+- Architecture: `CORE_HOSPITAL_SYSTEM.md`
+- Roadmap: `samruddhi_roadmap_and_dependencies.md`
+- Supabase Setup: `samruddhi_supabase_hospital_setup.md`
+
+## 🔑 Environment Variables
+
+Required in `.env.local`:
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE`
 - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
-- `MONGO_URI`, `JWT_SECRET`, `IDEMPOTENCY_SECRET`
-- `NODE_ENV`, `PORT` (optional on serverless)
+- `MONGO_URI`
+- `JWT_SECRET`
+- `PORT` (default: 3000)
 
-## Clean commits
+## 📦 Key NPM Scripts
 
 ```bash
-git add .
-git commit -m "chore: repo scaffolding (.gitignore, README, .env.example)"
+npm run dev              # Dev server with hot reload
+npm run build            # Compile TypeScript
+npm run seed             # Idempotent seed data
+npm run typegen          # Generate Supabase types
+npm run consent:grant    # CLI: Grant consent
+npm run consent:revoke   # CLI: Revoke consent
 ```
 
----
+## 🏥 API Endpoints
 
-## Phase 1 Status Snapshot
+**Admissions:**
+- `POST /admissions` - Create admission (atomic with bed locking)
+- `PATCH /admissions/:id/discharge` - Discharge patient
+- `GET /admissions?hospitalId=&active=true` - List admissions
+- `GET /admissions/:id` - Get single admission
 
-Completed (Day 0–1):
+**Resources:**
+- `GET /beds?hospitalId=&type=&status=` - Query beds
+- `GET /hospitals/:id/capacity` - Get capacity summary
+- `GET /doctors?hospitalId=&departmentId=` - List doctors
 
-- Repo + env scaffolding (`.env.example`, `.gitignore`, Supabase linked)
-- Core tables migrated: `users`, `hospitals`, `departments`, `doctors`, `patients`, `beds`, `admissions`, `audit_logs`
-- RLS policies for hospital isolation + doctor-scope admissions
-- Seed data: 1 super admin, 3 hospitals, 8 departments, 10 doctors, 150 beds (all available)
-- Performance indexes: available beds, active admissions
+**Consent & EHR:**
+- `POST /consent/grant` - Grant EHR access (7-day TTL)
+- `POST /consent/revoke` - Revoke consent
+- `GET /ehr/patient/:id` - Read EHR (requires consent)
 
-Pending (to finish Phase 1):
+**Health:**
+- `GET /health/live` - Liveness probe
+- `GET /health/ready` - Readiness probe
 
-- Postgres RPCs: `admission_create_atomic`, `admission_discharge_atomic`
-- Bed & doctor workload trigger logic + capacity summary refresh
-- Minimal patients + sample admission seed (after RPCs)
-- Consent endpoints `/consent/grant`, `/consent/revoke` (JWT + Redis TTL)
-- EHR read endpoint `GET /ehr/patient/:id` (Mongo + validated consent)
+## 🎯 Next Steps After Today
+
+**Phase 2:** Inventory management + stock tracking  
+**Phase 3:** Transfer requests (inter-hospital resource sharing)  
+**Phase 4:** ML predictions, dashboards, deployment
 
 ---
 
