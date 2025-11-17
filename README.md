@@ -23,6 +23,7 @@ npm run build        # Compile TypeScript
 ## 📋 Implementation Plan (Phase 2: Auth + EHR)
 
 ### **Goal:** Production-ready hospital API with:
+
 - ✅ Supabase Auth for patients & staff (role-based)
 - ✅ Patient EHR in MongoDB (prescriptions, reports, IoT logs)
 - ✅ 7/14-day consent with scope-based access
@@ -34,17 +35,21 @@ npm run build        # Compile TypeScript
 ### **Phase A: Supabase Auth Setup** 🔐
 
 #### Step 1: Enable Supabase Auth (Manual)
+
 **Action Required:** Go to Supabase Dashboard → Authentication → Providers
+
 - Enable **Email** provider (for both patients & staff)
 - Set JWT expiry to 7 days (default is fine)
 - Save ANON_KEY to `.env.local` as `SUPABASE_ANON_KEY`
 
 #### Step 2: Custom JWT Claims
+
 - [ ] Create Postgres function to add claims: `role`, `hospital_id`, `patient_id`
 - [ ] Deploy via migration: `20251117000001_auth_claims.sql`
 - [ ] Test: signup → JWT contains custom claims
 
 #### Step 3: Auth Middleware
+
 - [ ] Create `src/middleware/auth.ts` - validate Supabase JWT
 - [ ] Extract `userId`, `role`, `hospitalId`, `patientId` from claims
 - [ ] Attach to `req` object for downstream use
@@ -55,26 +60,31 @@ npm run build        # Compile TypeScript
 ### **Phase B: MongoDB EHR Schema** 📦
 
 #### Step 4: EHR Data Structure
+
 ```typescript
 interface PatientEHR {
   patient_id: string;
   abha_id: string;
-  profile: { name, dob, blood_group, phone, address };
-  medical_history: Array<{ date, condition, treatment, notes }>;
+  profile: { name; dob; blood_group; phone; address };
+  medical_history: Array<{ date; condition; treatment; notes }>;
   prescriptions: Array<{
-    date, doctor_name, medications, 
-    pdf_url?: string,  // Supabase Storage URL
-    parsed_data: { medicines, dosage, duration }
+    date;
+    doctor_name;
+    medications;
+    pdf_url?: string; // Supabase Storage URL
+    parsed_data: { medicines; dosage; duration };
   }>;
   test_reports: Array<{
-    test_name, date, lab_name,
-    pdf_url?: string,
-    parsed_results: Record<string, any>
+    test_name;
+    date;
+    lab_name;
+    pdf_url?: string;
+    parsed_results: Record<string, any>;
   }>;
   iot_devices: Array<{
-    device_type: 'heart_rate' | 'glucose' | 'bp' | 'spo2',
-    device_id: string,
-    logs: Array<{ timestamp, value, unit, context }>
+    device_type: "heart_rate" | "glucose" | "bp" | "spo2";
+    device_id: string;
+    logs: Array<{ timestamp; value; unit; context }>;
   }>;
   created_at: Date;
   updated_at: Date;
@@ -82,6 +92,7 @@ interface PatientEHR {
 ```
 
 #### Step 5: EHR Helper Functions
+
 - [ ] `src/lib/ehr.ts` - MongoDB helpers
 - [ ] `createPatientEHR(patientId, profile)`
 - [ ] `getPatientEHR(patientId, scope)` - filter by consent scope
@@ -94,6 +105,7 @@ interface PatientEHR {
 ### **Phase C: Consent System Upgrade** 🔐
 
 #### Step 6: Consent with Scopes
+
 - [ ] Update `POST /consent/grant` schema:
   ```json
   {
@@ -108,6 +120,7 @@ interface PatientEHR {
 - [ ] Return consent token + QR code data
 
 #### Step 7: Scope-Based Validation
+
 - [ ] Update `requireConsent` middleware
 - [ ] Check if requested resource in granted scope
 - [ ] Return 403 if scope insufficient
@@ -117,12 +130,14 @@ interface PatientEHR {
 ### **Phase D: Hospital EHR Access** 🏥
 
 #### Step 8: Read Endpoints (require consent)
+
 - [ ] `GET /ehr/patient/:id` - Full EHR (filtered by scope)
 - [ ] `GET /ehr/patient/:id/prescriptions` - All prescriptions
 - [ ] `GET /ehr/patient/:id/test-reports` - All reports
 - [ ] `GET /ehr/patient/:id/iot/:deviceType` - IoT logs
 
 #### Step 9: Write Endpoints (require consent + staff auth)
+
 - [ ] `POST /ehr/patient/:id/prescription` - Add new prescription
 - [ ] `POST /ehr/patient/:id/test-report` - Add test report
 - [ ] `POST /ehr/patient/:id/iot-log` - Add IoT reading
@@ -133,11 +148,13 @@ interface PatientEHR {
 ### **Phase E: Audit & Capacity** 📊
 
 #### Step 10: Comprehensive Audit Logging
+
 - [ ] Create `src/lib/audit.ts` - `logAudit()` helper
 - [ ] Wire to: admissions, discharge, consent grant/revoke, all EHR ops
 - [ ] Include: userId, action, resourceType, changes (before/after), IP, requestId
 
 #### Step 11: Capacity Dashboard
+
 - [ ] `GET /hospitals/:id/dashboard` - Real-time stats
   - Available beds by type
   - Active admissions count
@@ -149,6 +166,7 @@ interface PatientEHR {
 ### **Phase F: Seeds & Testing** ✅
 
 #### Step 12: Patient Seeds with EHR Data
+
 - [ ] Add 10 patients to `scripts/seed.js`
 - [ ] Create sample EHR records in MongoDB:
   - 2-3 prescriptions per patient (with parsed data)
@@ -156,14 +174,17 @@ interface PatientEHR {
   - IoT logs (heart rate: 60-100 bpm, glucose: 80-140 mg/dL)
 
 #### Step 13: Test Admissions
+
 - [ ] Use RPC to create 5 admissions
 - [ ] Verify: beds → occupied, doctor workload ↑, capacity updates
 
 #### Step 14: Generate Types
+
 - [ ] Run `npm run typegen` with Supabase project ID
 - [ ] Update imports across codebase
 
 #### Step 15: End-to-End Testing
+
 - [ ] Patient signup (Supabase Auth)
 - [ ] Grant 14-day consent (all scopes)
 - [ ] Staff login → view patient EHR
