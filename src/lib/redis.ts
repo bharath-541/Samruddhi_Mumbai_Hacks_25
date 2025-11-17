@@ -1,7 +1,10 @@
-type ConsentRecord = {
+import { ConsentScope } from '../types/ehr';
+
+export type ConsentRecord = {
   patientId: string;
   recipientId: string;
-  scope: string;
+  recipientHospitalId?: string;
+  scope: ConsentScope[]; // Changed from string to array
   grantedAt: string;
   expiresAt: string;
   revoked: boolean;
@@ -41,13 +44,25 @@ export async function revokeConsent(jti: string) {
   return true;
 }
 
-export async function isConsentValid(jti: string, expect: { recipientId: string; scope: string; now?: Date }) {
+export async function isConsentValid(
+  jti: string, 
+  expect: { 
+    recipientId: string; 
+    requiredScope?: ConsentScope; 
+    now?: Date 
+  }
+) {
   const rec = await getConsent(jti);
   if (!rec) return false;
   if (rec.revoked) return false;
   const now = expect.now ?? new Date();
   if (new Date(rec.expiresAt) <= now) return false;
   if (rec.recipientId !== expect.recipientId) return false;
-  if (!rec.scope || !expect.scope.startsWith(rec.scope.split(' ')[0])) return false;
+  
+  // Check if required scope is in granted scopes
+  if (expect.requiredScope && !rec.scope.includes(expect.requiredScope)) {
+    return false;
+  }
+  
   return true;
 }

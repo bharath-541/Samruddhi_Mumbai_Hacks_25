@@ -55,8 +55,11 @@ const AdmissionDischargeSchema = z.object({
 const ConsentGrantSchema = z.object({
   patientId: z.string().uuid(),
   recipientId: z.string().uuid(),
-  scope: z.string().min(3),
-  durationDays: z.number().int().positive().max(30).default(7)
+  recipientHospitalId: z.string().uuid().optional(),
+  scope: z.array(z.enum(['profile', 'medical_history', 'prescriptions', 'test_reports', 'iot_devices'])).min(1),
+  durationDays: z.number().refine(val => val === 7 || val === 14, {
+    message: 'Duration must be 7 or 14 days'
+  }).default(7)
 });
 
 const ConsentRevokeSchema = z.object({
@@ -134,25 +137,39 @@ app.patch('/admissions/:id/discharge', async (req, res) => {
   res.json(data);
 });
 
-// Consent grant (JWT + Redis TTL)
+// Consent grant (JWT + Redis TTL with scopes)
 app.post('/consent/grant', async (req, res) => {
   const parsed = ConsentGrantSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const { patientId, recipientId, scope, durationDays } = parsed.data;
+  const { patientId, recipientId, recipientHospitalId, scope, durationDays } = parsed.data;
   try {
-    const exp = Math.floor(Date.now() / 1000) + durationDays * 86400;
+    const exp = Math.floor(Date.now() / 1000) + (durationDays * 86400);
     const jti = crypto.randomUUID();
-    const token = signConsent({ sub: patientId, aud: recipientId, scope, exp, jti });
+    const token = signConsent({ 
+      sub: patientId, 
+      aud: recipientId,
+      hospital_id: recipientHospitalId,
+      scope, 
+      exp, 
+      jti 
+    });
     const record = {
       patientId,
       recipientId,
+      recipientHospitalId,
       scope,
       grantedAt: new Date().toISOString(),
       expiresAt: new Date(exp * 1000).toISOString(),
       revoked: false,
     };
-    await setConsent(jti, record as any, durationDays * 86400);
-    res.status(201).json({ consentId: jti, consentToken: token, expiresAt: record.expiresAt });
+    await setConsent(jti, record, durationDays * 86400);
+    res.status(201).json({ 
+      consentId: jti, 
+      consentToken: token, 
+      expiresAt: record.expiresAt,
+      scope,
+      durationDays
+    });
   } catch (e: any) {
     req.log.error({ err: e }, 'consent grant failed');
     res.status(500).json({ error: 'Consent grant failed' });
@@ -172,15 +189,20 @@ app.post('/consent/revoke', async (req, res) => {
   }
 });
 
-// EHR read (requires consent middleware)
+// EHR read (requires consent middleware with scope filtering)
 app.get('/ehr/patient/:id', requireConsent, async (req, res) => {
   const patientId = req.params.id;
   try {
-    const { getMongo } = await import('./lib/mongo');
-    const db = await getMongo();
-    const record = await db.collection('ehr_records').findOne({ patient_id: patientId });
+    const { getPatientEHR } = await import('./lib/ehr');
+    const consentScopes = (req as any).consent?.scopes || [];
+    const record = await getPatientEHR(patientId, consentScopes);
     if (!record) return res.status(404).json({ error: 'EHR record not found' });
-    res.json({ access: 'granted', patientId, ehr: record });
+    res.json({ 
+      access: 'granted', 
+      patientId, 
+      scopes: consentScopes,
+      ehr: record 
+    });
   } catch (e: any) {
     req.log.error({ err: e }, 'EHR read failed');
     res.status(500).json({ error: 'EHR read failed' });

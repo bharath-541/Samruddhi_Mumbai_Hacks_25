@@ -1,10 +1,12 @@
 import jwt from 'jsonwebtoken';
+import { ConsentScope } from '../types/ehr';
 
 export type ConsentClaims = {
   iss: string;
   sub: string; // patientId
   aud: string; // recipient/staff id
-  scope: string;
+  hospital_id?: string; // recipient hospital id
+  scope: ConsentScope[]; // Changed from string to array
   exp: number;
   iat: number;
   jti: string;
