@@ -86,6 +86,53 @@ const DoctorsQuerySchema = z.object({
   specialization: z.string().optional()
 });
 
+const PrescriptionSchema = z.object({
+  date: z.string(),
+  doctor_name: z.string().min(1),
+  hospital_name: z.string().optional(),
+  medications: z.array(z.object({
+    name: z.string().min(1),
+    dosage: z.string().min(1),
+    frequency: z.string().min(1),
+    duration: z.string().min(1),
+    notes: z.string().optional()
+  })).min(1),
+  diagnosis: z.string().optional(),
+  pdf_url: z.string().url().optional(),
+  parsed_data: z.object({
+    medicines: z.array(z.string()),
+    dosage: z.array(z.string()),
+    duration: z.array(z.string())
+  }).optional()
+});
+
+const TestReportSchema = z.object({
+  test_name: z.string().min(1),
+  date: z.string(),
+  lab_name: z.string().optional(),
+  doctor_name: z.string().optional(),
+  pdf_url: z.string().url().optional(),
+  parsed_results: z.record(z.string(), z.any()).optional(),
+  notes: z.string().optional()
+});
+
+const IoTLogSchema = z.object({
+  device_type: z.enum(['heart_rate', 'glucose', 'blood_pressure', 'spo2', 'temperature']),
+  device_id: z.string().min(1),
+  value: z.number(),
+  unit: z.string().min(1),
+  context: z.string().optional()
+});
+
+const MedicalHistorySchema = z.object({
+  date: z.string(),
+  condition: z.string().min(1),
+  treatment: z.string().optional(),
+  notes: z.string().optional(),
+  doctor_name: z.string().optional(),
+  hospital_name: z.string().optional()
+});
+
 // Health
 app.get('/health/live', (_req, res) => res.json({ status: 'ok' }));
 app.get('/health/ready', async (_req, res) => {
@@ -209,6 +256,202 @@ app.get('/ehr/patient/:id', requireConsent, async (req, res) => {
   }
 });
 
+// EHR - Get prescriptions (requires 'prescriptions' scope)
+app.get('/ehr/patient/:id/prescriptions', requireConsent, async (req, res) => {
+  const patientId = req.params.id;
+  const consentScopes = (req as any).consent?.scopes || [];
+  
+  if (!consentScopes.includes('prescriptions')) {
+    return res.status(403).json({ error: 'Insufficient consent scope', required: 'prescriptions' });
+  }
+
+  try {
+    const { getPatientEHR } = await import('./lib/ehr');
+    const record = await getPatientEHR(patientId, ['prescriptions']);
+    res.json({ prescriptions: record?.prescriptions || [] });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Prescriptions fetch failed');
+    res.status(500).json({ error: 'Prescriptions fetch failed' });
+  }
+});
+
+// EHR - Get test reports (requires 'test_reports' scope)
+app.get('/ehr/patient/:id/test-reports', requireConsent, async (req, res) => {
+  const patientId = req.params.id;
+  const consentScopes = (req as any).consent?.scopes || [];
+  
+  if (!consentScopes.includes('test_reports')) {
+    return res.status(403).json({ error: 'Insufficient consent scope', required: 'test_reports' });
+  }
+
+  try {
+    const { getPatientEHR } = await import('./lib/ehr');
+    const record = await getPatientEHR(patientId, ['test_reports']);
+    res.json({ test_reports: record?.test_reports || [] });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Test reports fetch failed');
+    res.status(500).json({ error: 'Test reports fetch failed' });
+  }
+});
+
+// EHR - Get medical history (requires 'medical_history' scope)
+app.get('/ehr/patient/:id/medical-history', requireConsent, async (req, res) => {
+  const patientId = req.params.id;
+  const consentScopes = (req as any).consent?.scopes || [];
+  
+  if (!consentScopes.includes('medical_history')) {
+    return res.status(403).json({ error: 'Insufficient consent scope', required: 'medical_history' });
+  }
+
+  try {
+    const { getPatientEHR } = await import('./lib/ehr');
+    const record = await getPatientEHR(patientId, ['medical_history']);
+    res.json({ medical_history: record?.medical_history || [] });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Medical history fetch failed');
+    res.status(500).json({ error: 'Medical history fetch failed' });
+  }
+});
+
+// EHR - Get IoT device logs (requires 'iot_devices' scope)
+app.get('/ehr/patient/:id/iot/:deviceType', requireConsent, async (req, res) => {
+  const patientId = req.params.id;
+  const deviceType = req.params.deviceType as any;
+  const consentScopes = (req as any).consent?.scopes || [];
+  
+  if (!consentScopes.includes('iot_devices')) {
+    return res.status(403).json({ error: 'Insufficient consent scope', required: 'iot_devices' });
+  }
+
+  try {
+    const { getIoTLogs } = await import('./lib/ehr');
+    const logs = await getIoTLogs(patientId, deviceType);
+    res.json({ device_type: deviceType, logs });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'IoT logs fetch failed');
+    res.status(500).json({ error: 'IoT logs fetch failed' });
+  }
+});
+
+// EHR - Add prescription (requires 'prescriptions' scope + auth)
+app.post('/ehr/patient/:id/prescription', requireConsent, async (req, res) => {
+  const patientId = req.params.id;
+  const consentScopes = (req as any).consent?.scopes || [];
+  
+  if (!consentScopes.includes('prescriptions')) {
+    return res.status(403).json({ error: 'Insufficient consent scope', required: 'prescriptions' });
+  }
+
+  const parsed = PrescriptionSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    const { addPrescription } = await import('./lib/ehr');
+    const userId = (req as any).user?.id || 'unknown';
+    const prescription = { ...parsed.data, created_by: userId };
+    const success = await addPrescription(patientId, prescription);
+    
+    if (!success) {
+      return res.status(404).json({ error: 'Patient EHR not found' });
+    }
+
+    res.status(201).json({ success: true, message: 'Prescription added' });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Add prescription failed');
+    res.status(500).json({ error: 'Add prescription failed' });
+  }
+});
+
+// EHR - Add test report (requires 'test_reports' scope + auth)
+app.post('/ehr/patient/:id/test-report', requireConsent, async (req, res) => {
+  const patientId = req.params.id;
+  const consentScopes = (req as any).consent?.scopes || [];
+  
+  if (!consentScopes.includes('test_reports')) {
+    return res.status(403).json({ error: 'Insufficient consent scope', required: 'test_reports' });
+  }
+
+  const parsed = TestReportSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    const { addTestReport } = await import('./lib/ehr');
+    const userId = (req as any).user?.id || 'unknown';
+    const report = { ...parsed.data, created_by: userId };
+    const success = await addTestReport(patientId, report);
+    
+    if (!success) {
+      return res.status(404).json({ error: 'Patient EHR not found' });
+    }
+
+    res.status(201).json({ success: true, message: 'Test report added' });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Add test report failed');
+    res.status(500).json({ error: 'Add test report failed' });
+  }
+});
+
+// EHR - Add IoT log (requires 'iot_devices' scope + auth)
+app.post('/ehr/patient/:id/iot-log', requireConsent, async (req, res) => {
+  const patientId = req.params.id;
+  const consentScopes = (req as any).consent?.scopes || [];
+  
+  if (!consentScopes.includes('iot_devices')) {
+    return res.status(403).json({ error: 'Insufficient consent scope', required: 'iot_devices' });
+  }
+
+  const parsed = IoTLogSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    const { addIoTLog } = await import('./lib/ehr');
+    const { device_type, device_id, value, unit, context } = parsed.data;
+    const log = {
+      timestamp: new Date().toISOString(),
+      value,
+      unit,
+      context
+    };
+    const success = await addIoTLog(patientId, device_type, device_id, log);
+    
+    if (!success) {
+      return res.status(404).json({ error: 'Patient EHR not found' });
+    }
+
+    res.status(201).json({ success: true, message: 'IoT log added' });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Add IoT log failed');
+    res.status(500).json({ error: 'Add IoT log failed' });
+  }
+});
+
+// EHR - Add medical history entry (requires 'medical_history' scope + auth)
+app.post('/ehr/patient/:id/medical-history', requireConsent, async (req, res) => {
+  const patientId = req.params.id;
+  const consentScopes = (req as any).consent?.scopes || [];
+  
+  if (!consentScopes.includes('medical_history')) {
+    return res.status(403).json({ error: 'Insufficient consent scope', required: 'medical_history' });
+  }
+
+  const parsed = MedicalHistorySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    const { addMedicalHistory } = await import('./lib/ehr');
+    const success = await addMedicalHistory(patientId, parsed.data);
+    
+    if (!success) {
+      return res.status(404).json({ error: 'Patient EHR not found' });
+    }
+
+    res.status(201).json({ success: true, message: 'Medical history entry added' });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Add medical history failed');
+    res.status(500).json({ error: 'Add medical history failed' });
+  }
+});
+
 // Beds (read-only, filtered)
 app.get('/beds', async (req, res) => {
   const parsed = BedsQuerySchema.safeParse(req.query);
@@ -295,6 +538,87 @@ app.get('/admissions/:id', async (req, res) => {
   } catch (e: any) {
     req.log.error({ err: e }, 'admission fetch failed');
     res.status(500).json({ error: 'Admission fetch failed' });
+  }
+});
+
+// Hospital capacity dashboard (real-time stats)
+app.get('/hospitals/:id/dashboard', async (req, res) => {
+  const hospitalId = req.params.id;
+  try {
+    // Get hospital with capacity summary
+    const { data: hospital, error: hospError } = await supabase
+      .from('hospitals')
+      .select('id, name, capacity_summary')
+      .eq('id', hospitalId)
+      .single();
+    
+    if (hospError) throw hospError;
+    if (!hospital) return res.status(404).json({ error: 'Hospital not found' });
+
+    // Get beds breakdown by type and status
+    const { data: beds, error: bedsError } = await supabase
+      .from('beds')
+      .select('type, status')
+      .eq('hospital_id', hospitalId);
+    
+    if (bedsError) throw bedsError;
+
+    // Calculate bed stats
+    const bedStats = beds?.reduce((acc: any, bed) => {
+      const type = bed.type || 'general';
+      if (!acc[type]) acc[type] = { total: 0, available: 0, occupied: 0, maintenance: 0 };
+      acc[type].total++;
+      if (bed.status === 'available') acc[type].available++;
+      if (bed.status === 'occupied') acc[type].occupied++;
+      if (bed.status === 'maintenance') acc[type].maintenance++;
+      return acc;
+    }, {});
+
+    // Get active admissions count
+    const { count: activeAdmissions, error: admError } = await supabase
+      .from('admissions')
+      .select('*', { count: 'exact', head: true })
+      .eq('hospital_id', hospitalId)
+      .is('discharged_at', null);
+    
+    if (admError) throw admError;
+
+    // Get doctor workload summary
+    const { data: doctors, error: docError } = await supabase
+      .from('doctors')
+      .select('specialization, current_patient_count, max_patients, is_on_duty')
+      .eq('hospital_id', hospitalId)
+      .eq('is_active', true);
+    
+    if (docError) throw docError;
+
+    const doctorStats = {
+      total: doctors?.length || 0,
+      on_duty: doctors?.filter(d => d.is_on_duty).length || 0,
+      by_specialization: doctors?.reduce((acc: any, doc) => {
+        const spec = doc.specialization || 'general';
+        if (!acc[spec]) acc[spec] = { count: 0, current_load: 0, max_capacity: 0 };
+        acc[spec].count++;
+        acc[spec].current_load += doc.current_patient_count || 0;
+        acc[spec].max_capacity += doc.max_patients || 10;
+        return acc;
+      }, {})
+    };
+
+    res.json({
+      hospital: {
+        id: hospital.id,
+        name: hospital.name
+      },
+      capacity_summary: hospital.capacity_summary,
+      beds: bedStats,
+      active_admissions: activeAdmissions || 0,
+      doctors: doctorStats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'dashboard fetch failed');
+    res.status(500).json({ error: 'Dashboard fetch failed' });
   }
 });
 
