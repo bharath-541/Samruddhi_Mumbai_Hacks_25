@@ -11,7 +11,6 @@ The shared Redis consent architecture (Option B) has been **fully implemented** 
 1. **Supabase Auth JWT** (short-lived, 1h)
    - Proves WHO you are (patient or staff)
    - Contains: `sub`, `role`, `hospital_id`, `patient_id`
-   
 2. **Consent JWT** (long-lived, 7-14 days)
    - Proves patient GRANTED access
    - Stored in shared Upstash Redis
@@ -52,6 +51,7 @@ revokeConsent(jti: string): Promise<boolean>
 ### 2. Enhanced Consent Middleware (`src/middleware/consent.ts`)
 
 **Key Features:**
+
 - **Fast path revocation check**: Checks `consent:{jti}:revoked` flag BEFORE fetching full record
 - **Hospital validation**: Verifies `req.user.hospitalId` matches `recipientHospitalId`
 - **Attaches hospitalId**: Adds `hospitalId` to `req.consent` for downstream use
@@ -60,6 +60,7 @@ revokeConsent(jti: string): Promise<boolean>
 ### 3. Five Consent Endpoints (`src/server.ts`)
 
 #### POST /consent/grant
+
 ```http
 Authorization: Bearer <PATIENT_SUPABASE_JWT>
 Content-Type: application/json
@@ -82,6 +83,7 @@ Response: {
 ```
 
 **Features:**
+
 - Requires `requireAuth` middleware (patient must be logged in)
 - Validates patient can only grant consent for themselves
 - Generates Consent JWT with unique `jti`
@@ -89,6 +91,7 @@ Response: {
 - **Adds to both patient and hospital indexes**
 
 #### POST /consent/revoke
+
 ```http
 Authorization: Bearer <PATIENT_SUPABASE_JWT>
 Content-Type: application/json
@@ -103,12 +106,14 @@ Response: {
 ```
 
 **Features:**
+
 - Requires `requireAuth` middleware
 - Validates patient owns the consent (patientId match)
 - Sets `consent:{jti}:revoked` flag with TTL
 - Updates main consent record's `revoked` field
 
 #### GET /consent/status/:consentId
+
 ```http
 # Public endpoint (no auth required)
 
@@ -127,11 +132,13 @@ Response: {
 ```
 
 **Features:**
+
 - Public endpoint (both patient and hospital can check)
 - Returns full status (valid, revoked, expired)
 - Useful for debugging or patient app UI
 
 #### GET /consent/my
+
 ```http
 Authorization: Bearer <PATIENT_SUPABASE_JWT>
 
@@ -154,6 +161,7 @@ Response: {
 ```
 
 **Features:**
+
 - Patient-side endpoint (requires patient auth)
 - Fetches all JTIs from `patient:{id}:consents` SET
 - Enriches with hospital names from Supabase
@@ -161,6 +169,7 @@ Response: {
 - Returns active, revoked, and expired consents for patient review
 
 #### GET /consent/received
+
 ```http
 Authorization: Bearer <STAFF_SUPABASE_JWT>
 
@@ -179,6 +188,7 @@ Response: {
 ```
 
 **Features:**
+
 - Hospital-side endpoint (requires staff auth with `hospital_id`)
 - Fetches all JTIs from `hospital:{id}:consents` SET
 - **Only returns ACTIVE consents** (filters out revoked/expired)
@@ -187,6 +197,7 @@ Response: {
 ## Complete Flow
 
 ### 1. Patient Grants Consent
+
 ```typescript
 // Patient app calls:
 POST /consent/grant
@@ -206,6 +217,7 @@ Authorization: Bearer <patient_jwt>
 ```
 
 ### 2. Hospital Accesses EHR
+
 ```typescript
 // Hospital staff calls:
 GET /ehr/patient/{id}/prescriptions
@@ -222,6 +234,7 @@ X-Consent-Token: <consent_jwt>
 ```
 
 ### 3. Patient Revokes Consent
+
 ```typescript
 // Patient app calls:
 POST /consent/revoke
@@ -241,6 +254,7 @@ Authorization: Bearer <patient_jwt>
 ```
 
 ### 4. Patient Views Granted Consents
+
 ```typescript
 // Patient app calls:
 GET /consent/my
@@ -255,6 +269,7 @@ Authorization: Bearer <patient_jwt>
 ```
 
 ### 5. Hospital Views Received Consents
+
 ```typescript
 // Hospital dashboard calls:
 GET /consent/received
@@ -271,6 +286,7 @@ Authorization: Bearer <staff_jwt>
 ## Testing
 
 ### Run Test Script
+
 ```bash
 # Make sure server is running
 npm start
@@ -280,6 +296,7 @@ node scripts/test_endpoints.js
 ```
 
 ### Test Flow
+
 1. ✅ Patient login (Supabase Auth)
 2. ✅ Staff login (Supabase Auth)
 3. ✅ Grant consent (patient → staff)
@@ -313,16 +330,19 @@ TTL consent:{jti}:revoked
 ## Performance Characteristics
 
 ### Fast Path Revocation Check
+
 - **Before**: Fetch full consent record (Redis GET) → parse JSON → check `revoked` field
 - **After**: Check flag (Redis EXISTS) → if TRUE: return 403 immediately
 - **Benefit**: ~50% faster for revoked consents (no JSON parsing)
 
 ### Index-Based Listing
+
 - **Before**: Scan all Redis keys or query Supabase
 - **After**: SMEMBERS patient:{id}:consents → get exact list
 - **Benefit**: O(1) lookup instead of O(n) scan
 
 ### TTL Auto-Cleanup
+
 - Redis automatically removes expired keys
 - No cron jobs or cleanup scripts needed
 - Indexes stay accurate (expired JTIs removed automatically)
@@ -346,6 +366,7 @@ TTL consent:{jti}:revoked
 ## Summary
 
 The shared Redis consent architecture is **production-ready** with:
+
 - ✅ Fast revocation checking (sub-millisecond response)
 - ✅ Patient and hospital indexes for efficient listing
 - ✅ Hospital validation (prevents cross-hospital access)
