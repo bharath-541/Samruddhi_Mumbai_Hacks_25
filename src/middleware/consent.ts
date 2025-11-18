@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyConsent } from '../lib/jwt';
-import { getConsent } from '../lib/redis';
+import { getConsent, isConsentRevoked } from '../lib/redis';
 import { ConsentScope } from '../types/ehr';
 import { AuthenticatedRequest } from './auth';
 
@@ -9,6 +9,7 @@ export interface ConsentRequest extends AuthenticatedRequest {
     patientId: string;
     scopes: ConsentScope[];
     jti: string;
+    hospitalId?: string;
   };
 }
 
@@ -16,7 +17,7 @@ export interface ConsentRequest extends AuthenticatedRequest {
  * Middleware to validate consent token
  * Requires: Authorization header (staff JWT via requireAuth)
  * Requires: X-Consent-Token header (consent JWT from patient)
- * Validates: consent not revoked, not expired, staff is recipient
+ * Validates: consent not revoked, not expired, staff is recipient, hospital matches
  */
 export async function requireConsent(
   req: ConsentRequest,
@@ -40,7 +41,14 @@ export async function requireConsent(
       return;
     }
 
-    // Check Redis for consent record (validates not revoked + TTL)
+    // Fast path: check revocation flag first
+    const revoked = await isConsentRevoked(consentClaims.jti);
+    if (revoked) {
+      res.status(403).json({ error: 'Consent has been revoked' });
+      return;
+    }
+
+    // Check Redis for consent record (validates TTL)
     const consentRecord = await getConsent(consentClaims.jti);
     
     if (!consentRecord) {
@@ -65,11 +73,20 @@ export async function requireConsent(
       return;
     }
 
+    // Verify hospital matches (if staff has hospital_id claim)
+    if (req.user?.hospitalId && consentRecord.recipientHospitalId) {
+      if (req.user.hospitalId !== consentRecord.recipientHospitalId) {
+        res.status(403).json({ error: 'Consent not granted to this hospital' });
+        return;
+      }
+    }
+
     // Attach consent info to request
     req.consent = {
       patientId: consentRecord.patientId,
       scopes: consentRecord.scope,
       jti: consentClaims.jti,
+      hospitalId: consentRecord.recipientHospitalId,
     };
 
     next();

@@ -18,6 +18,7 @@
 ### **Two JWT Systems**
 
 1. **Authentication JWT** (Supabase)
+
    - Issued when user logs in (patient or admin)
    - Short-lived (1 hour, auto-refreshed)
    - Contains: `sub` (user_id), `role`, `hospital_id`, `patient_id`
@@ -56,7 +57,7 @@ consent:{jti}:revoked                   → "1" if revoked, NULL if valid
 ✅ **Instant revocation** - Patient revokes → hospital sees it immediately  
 ✅ **No patient API needed** - Hospital doesn't call patient's server  
 ✅ **Works offline** - Patient can check cached JWT locally  
-✅ **Simple architecture** - One Upstash Redis instance, shared credentials  
+✅ **Simple architecture** - One Upstash Redis instance, shared credentials
 
 ---
 
@@ -78,6 +79,7 @@ Content-Type: application/json
 ```
 
 **Server Actions:**
+
 1. Validate patient JWT (requireAuth middleware)
 2. Extract `patientId` from `req.user.sub`
 3. Verify patient can only grant consent for themselves
@@ -91,6 +93,7 @@ Content-Type: application/json
 6. Return Consent JWT to patient
 
 **Patient App Actions:**
+
 - Receives Consent JWT
 - Optionally caches locally for offline check
 - Shares JWT with hospital (QR code, deep link, SMS, etc.)
@@ -106,6 +109,7 @@ X-Consent-Token: <CONSENT_JWT>                # Proves patient consent
 ```
 
 **Middleware Validation (requireConsent):**
+
 1. Verify Admin JWT (Supabase)
 2. Decode Consent JWT and extract `jti`
 3. **Check shared Redis:**
@@ -132,6 +136,7 @@ Content-Type: application/json
 ```
 
 **Server Actions:**
+
 1. Validate patient JWT
 2. Get consent: `GET consent:{consentId}`
 3. Verify ownership: `req.user.sub === consent.patientId`
@@ -142,6 +147,7 @@ Content-Type: application/json
 5. Update consent record: `{ ...consent, revoked: true }`
 
 **Result:**
+
 - Hospital's next request will fail with 403 (sees `consent:revoked` flag)
 - Patient app clears local cache
 
@@ -341,27 +347,38 @@ interface PatientEHR {
 ## 📚 Implementation Status
 
 ### **✅ Completed**
+
 - Supabase Auth with custom JWT claims (role, hospital_id, patient_id)
-- Shared Redis consent architecture (Option B)
+- Shared Redis consent architecture (Option B) **FULLY IMPLEMENTED**
+  - Redis helpers: isConsentRevoked, addToPatientIndex, addToHospitalIndex, getPatientConsents, getHospitalConsents
+  - Fast path revocation checking (consent:{jti}:revoked flag)
+  - Patient and hospital indexes for listing consents
+- **5 Consent Endpoints IMPLEMENTED:**
+  - POST /consent/grant (requireAuth, patient ownership validation)
+  - POST /consent/revoke (requireAuth, patient ownership validation)
+  - GET /consent/status/:consentId (public, returns valid/revoked/expired status)
+  - GET /consent/my (requireAuth, patient's granted consents with hospital names)
+  - GET /consent/received (requireAuth, hospital's received active consents)
+- Enhanced consent middleware with fast path revocation check + hospital validation
 - Complete EHR schema in MongoDB (profile, prescriptions, test_reports, iot_devices, medical_history)
 - Auth middleware (requireAuth, requireRole, requireHospital)
 - Consent middleware (requireConsent, requireConsentScope)
-- 25+ API endpoints (hospitals, beds, admissions, consent, EHR read/write)
+- 30+ API endpoints (hospitals, beds, admissions, consent, EHR read/write)
 - Hospital dashboard with real-time stats
 - Audit logging infrastructure (8 helper functions)
 - Atomic admission RPCs (create/discharge with bed locking)
+- **Test script with complete consent flow** (grant → access → revoke → blocked verification)
 
 ### **⏳ In Progress**
+
 - Wire audit logs to all endpoints
-- Implement consent list endpoints (GET /consent/my, GET /consent/received)
-- Add consent status endpoint (GET /consent/status/:id)
-- Update test script for end-to-end flow
+- Test complete end-to-end consent workflow with server running
 
 ### **📋 Pending**
+
 - Generate Supabase TypeScript types (npm run typegen)
 - Seed patient data with EHR records
 - Create test admissions via RPC
-- End-to-end testing (full consent workflow)
 - QR code generation for consent sharing
 - Patient-side Redis integration docs
 
@@ -370,18 +387,22 @@ interface PatientEHR {
 ## 🎯 Next Steps
 
 **Immediate (Today):**
-1. Implement consent list endpoints (my, received, status)
-2. Wire audit logging to all consent/EHR operations
-3. Update test script for complete workflow
-4. Test: grant → access → revoke → blocked flow
+
+1. ✅ Implement consent list endpoints (my, received, status) - DONE
+2. ✅ Enhanced consent middleware with fast revocation check - DONE
+3. ✅ Update test script for complete workflow - DONE
+4. Run test script to verify: grant → access → revoke → blocked flow
+5. Wire audit logging to all consent/EHR operations
 
 **Phase 2 (Next Session):**
+
 1. Inventory management + stock tracking
 2. Transfer requests (inter-hospital resource sharing)
 3. ML predictions for capacity forecasting
 4. Admin dashboards and visualizations
 
 **Phase 3 (Production Ready):**
+
 1. Rate limiting (Upstash)
 2. Sentry integration
 3. Performance optimization
@@ -406,11 +427,13 @@ interface PatientEHR {
 ### **Consent Management**
 
 #### `POST /consent/grant` (Patient Auth Required)
+
 Grant EHR access to hospital for specified scopes and duration.
 
 **Headers:** `Authorization: Bearer <PATIENT_SUPABASE_JWT>`
 
 **Body:**
+
 ```json
 {
   "recipientId": "staff-uuid",
@@ -421,6 +444,7 @@ Grant EHR access to hospital for specified scopes and duration.
 ```
 
 **Response:**
+
 ```json
 {
   "consentId": "jti-uuid",
@@ -434,16 +458,19 @@ Grant EHR access to hospital for specified scopes and duration.
 ---
 
 #### `POST /consent/revoke` (Patient Auth Required)
+
 Revoke previously granted consent.
 
 **Headers:** `Authorization: Bearer <PATIENT_SUPABASE_JWT>`
 
 **Body:**
+
 ```json
 { "consentId": "jti-uuid" }
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -455,9 +482,11 @@ Revoke previously granted consent.
 ---
 
 #### `GET /consent/status/:consentId` (Optional Auth)
+
 Check consent validity (both patient and hospital can call).
 
 **Response:**
+
 ```json
 {
   "consentId": "jti-uuid",
@@ -473,9 +502,11 @@ Check consent validity (both patient and hospital can call).
 ---
 
 #### `GET /consent/my` (Patient Auth Required)
+
 List all consents granted by patient.
 
 **Response:**
+
 ```json
 {
   "consents": [
@@ -495,9 +526,11 @@ List all consents granted by patient.
 ---
 
 #### `GET /consent/received` (Hospital Admin Auth Required)
+
 List all consents received by hospital.
 
 **Response:**
+
 ```json
 {
   "consents": [
@@ -518,6 +551,7 @@ List all consents received by hospital.
 ### **Patient EHR Access (Requires Consent + Admin Auth)**
 
 All EHR endpoints require:
+
 - `Authorization: Bearer <ADMIN_SUPABASE_JWT>`
 - `X-Consent-Token: <CONSENT_JWT>`
 
@@ -569,7 +603,7 @@ All EHR endpoints require:
 
 ```javascript
 // React Native / Flutter / Web
-import { Redis } from '@upstash/redis';
+import { Redis } from "@upstash/redis";
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
@@ -581,29 +615,32 @@ const redis = new Redis({
 
 ```javascript
 // 1. Patient selects hospital and scopes
-const response = await fetch('https://api.samruddhi.com/consent/grant', {
-  method: 'POST',
+const response = await fetch("https://api.samruddhi.com/consent/grant", {
+  method: "POST",
   headers: {
-    'Authorization': `Bearer ${patientSupabaseJWT}`,
-    'Content-Type': 'application/json'
+    Authorization: `Bearer ${patientSupabaseJWT}`,
+    "Content-Type": "application/json",
   },
   body: JSON.stringify({
     recipientId: staffId,
     recipientHospitalId: hospitalId,
-    scope: ['profile', 'prescriptions', 'test_reports'],
-    durationDays: 14
-  })
+    scope: ["profile", "prescriptions", "test_reports"],
+    durationDays: 14,
+  }),
 });
 
 const { consentId, consentToken, expiresAt } = await response.json();
 
 // 2. Cache locally (optional, for offline check)
-await AsyncStorage.setItem(`consent:${hospitalId}`, JSON.stringify({
-  consentId,
-  consentToken,
-  expiresAt,
-  scope: ['profile', 'prescriptions', 'test_reports']
-}));
+await AsyncStorage.setItem(
+  `consent:${hospitalId}`,
+  JSON.stringify({
+    consentId,
+    consentToken,
+    expiresAt,
+    scope: ["profile", "prescriptions", "test_reports"],
+  })
+);
 
 // 3. Share with hospital (QR code, deep link, etc.)
 generateQRCode(consentToken);
@@ -614,14 +651,17 @@ shareViaDeepLink(`samruddhi://consent?token=${consentToken}`);
 ### **Check Consent Status**
 
 ```javascript
-const status = await fetch(`https://api.samruddhi.com/consent/status/${consentId}`, {
-  headers: { 'Authorization': `Bearer ${patientSupabaseJWT}` }
-});
+const status = await fetch(
+  `https://api.samruddhi.com/consent/status/${consentId}`,
+  {
+    headers: { Authorization: `Bearer ${patientSupabaseJWT}` },
+  }
+);
 
 const { valid, revoked, expiresAt } = await status.json();
 
 if (revoked) {
-  alert('Consent has been revoked');
+  alert("Consent has been revoked");
   await AsyncStorage.removeItem(`consent:${hospitalId}`);
 }
 ```
@@ -629,13 +669,13 @@ if (revoked) {
 ### **Revoke Consent**
 
 ```javascript
-await fetch('https://api.samruddhi.com/consent/revoke', {
-  method: 'POST',
+await fetch("https://api.samruddhi.com/consent/revoke", {
+  method: "POST",
   headers: {
-    'Authorization': `Bearer ${patientSupabaseJWT}`,
-    'Content-Type': 'application/json'
+    Authorization: `Bearer ${patientSupabaseJWT}`,
+    "Content-Type": "application/json",
   },
-  body: JSON.stringify({ consentId })
+  body: JSON.stringify({ consentId }),
 });
 
 // Clear local cache
@@ -653,7 +693,7 @@ await AsyncStorage.removeItem(`consent:${hospitalId}`);
 const consentToken = scanQRCode(); // or from deep link parameter
 
 // Store in hospital's session
-sessionStorage.setItem('activeConsent', consentToken);
+sessionStorage.setItem("activeConsent", consentToken);
 ```
 
 ### **Access Patient EHR**
@@ -663,14 +703,14 @@ const prescriptions = await fetch(
   `https://api.samruddhi.com/ehr/patient/${patientId}/prescriptions`,
   {
     headers: {
-      'Authorization': `Bearer ${adminSupabaseJWT}`,
-      'X-Consent-Token': consentToken
-    }
+      Authorization: `Bearer ${adminSupabaseJWT}`,
+      "X-Consent-Token": consentToken,
+    },
   }
 );
 
 if (prescriptions.status === 403) {
-  alert('Consent expired or revoked');
+  alert("Consent expired or revoked");
 } else {
   const data = await prescriptions.json();
   displayPrescriptions(data);
@@ -681,19 +721,24 @@ if (prescriptions.status === 403) {
 
 ```javascript
 await fetch(`https://api.samruddhi.com/ehr/patient/${patientId}/prescription`, {
-  method: 'POST',
+  method: "POST",
   headers: {
-    'Authorization': `Bearer ${adminSupabaseJWT}`,
-    'X-Consent-Token': consentToken,
-    'Content-Type': 'application/json'
+    Authorization: `Bearer ${adminSupabaseJWT}`,
+    "X-Consent-Token": consentToken,
+    "Content-Type": "application/json",
   },
   body: JSON.stringify({
-    date: '2025-11-17',
-    doctor_name: 'Dr. Smith',
+    date: "2025-11-17",
+    doctor_name: "Dr. Smith",
     medications: [
-      { name: 'Amoxicillin', dosage: '500mg', frequency: '3x daily', duration: '7 days' }
-    ]
-  })
+      {
+        name: "Amoxicillin",
+        dosage: "500mg",
+        frequency: "3x daily",
+        duration: "7 days",
+      },
+    ],
+  }),
 });
 ```
 

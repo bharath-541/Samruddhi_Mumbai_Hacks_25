@@ -40,8 +40,36 @@ export async function revokeConsent(jti: string) {
   if (!rec) return false;
   rec.revoked = true;
   const ttl = Math.max(1, Math.floor((new Date(rec.expiresAt).getTime() - Date.now())/1000));
+  
+  // Set revocation flag for fast checking
+  await upstash('POST', `/set/consent:${jti}:revoked/1?EX=${ttl}`);
+  
+  // Update main record
   await setConsent(jti, rec, ttl);
   return true;
+}
+
+export async function isConsentRevoked(jti: string): Promise<boolean> {
+  const out = await upstash<{ result: number | null }>('GET', `/exists/consent:${jti}:revoked`);
+  return out.result === 1;
+}
+
+export async function addToPatientIndex(patientId: string, jti: string) {
+  return upstash('POST', `/sadd/patient:${patientId}:consents/${jti}`);
+}
+
+export async function addToHospitalIndex(hospitalId: string, jti: string) {
+  return upstash('POST', `/sadd/hospital:${hospitalId}:consents/${jti}`);
+}
+
+export async function getPatientConsents(patientId: string): Promise<string[]> {
+  const out = await upstash<{ result: string[] }>('GET', `/smembers/patient:${patientId}:consents`);
+  return out.result || [];
+}
+
+export async function getHospitalConsents(hospitalId: string): Promise<string[]> {
+  const out = await upstash<{ result: string[] }>('GET', `/smembers/hospital:${hospitalId}:consents`);
+  return out.result || [];
 }
 
 export async function isConsentValid(
@@ -52,6 +80,10 @@ export async function isConsentValid(
     now?: Date 
   }
 ) {
+  // Fast path: check revocation flag first
+  const revoked = await isConsentRevoked(jti);
+  if (revoked) return false;
+  
   const rec = await getConsent(jti);
   if (!rec) return false;
   if (rec.revoked) return false;

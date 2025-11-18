@@ -9,7 +9,7 @@ import pinoHttp from 'pino-http';
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { signConsent, verifyConsent } from './lib/jwt';
-import { setConsent, revokeConsent, isConsentValid } from './lib/redis';
+import { setConsent, revokeConsent, isConsentValid, addToPatientIndex, addToHospitalIndex } from './lib/redis';
 import { requireConsent } from './middleware/consent';
 import { requireAuth } from './middleware/auth';
 
@@ -218,6 +218,11 @@ app.post('/consent/grant', requireAuth, async (req, res) => {
       revoked: false,
     };
     await setConsent(jti, record, durationDays * 86400);
+    
+    // Add to shared Redis indexes for patient and hospital
+    await addToPatientIndex(patientId, jti);
+    await addToHospitalIndex(recipientHospitalId, jti);
+    
     res.status(201).json({ 
       consentId: jti, 
       consentToken: token, 
@@ -231,16 +236,161 @@ app.post('/consent/grant', requireAuth, async (req, res) => {
   }
 });
 
-// Consent revoke (Redis)
-app.post('/consent/revoke', async (req, res) => {
+// Consent revoke (Redis with auth validation)
+app.post('/consent/revoke', requireAuth, async (req, res) => {
   const parsed = ConsentRevokeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  
+  const { consentId } = parsed.data;
+  const authUser = (req as any).user;
+  
   try {
-    const ok = await revokeConsent(parsed.data.consentId);
+    // Fetch consent record to validate ownership
+    const { getConsent } = await import('./lib/redis');
+    const consent = await getConsent(consentId);
+    if (!consent) {
+      return res.status(404).json({ error: 'Consent not found' });
+    }
+    
+    // Only patient who granted consent can revoke it
+    if (consent.patientId !== authUser.userId) {
+      return res.status(403).json({ error: 'Can only revoke your own consent' });
+    }
+    
+    const ok = await revokeConsent(consentId);
     res.json({ revoked: ok });
   } catch (e: any) {
     req.log.error({ err: e }, 'consent revoke failed');
     res.status(500).json({ error: 'Consent revoke failed' });
+  }
+});
+
+// Consent status check (optional auth - works for both patient and hospital)
+app.get('/consent/status/:consentId', async (req, res) => {
+  const { consentId } = req.params;
+  
+  try {
+    const { getConsent, isConsentRevoked } = await import('./lib/redis');
+    const consent = await getConsent(consentId);
+    
+    if (!consent) {
+      return res.status(404).json({ error: 'Consent not found' });
+    }
+    
+    const revoked = await isConsentRevoked(consentId);
+    const expiresAt = new Date(consent.expiresAt);
+    const expired = expiresAt < new Date();
+    const valid = !revoked && !expired;
+    
+    res.json({
+      consentId,
+      valid,
+      revoked,
+      expired,
+      expiresAt: consent.expiresAt,
+      scope: consent.scope,
+      patientId: consent.patientId,
+      recipientId: consent.recipientId,
+      recipientHospitalId: consent.recipientHospitalId,
+      grantedAt: consent.grantedAt
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'consent status check failed');
+    res.status(500).json({ error: 'Consent status check failed' });
+  }
+});
+
+// Get patient's granted consents (requires patient auth)
+app.get('/consent/my', requireAuth, async (req, res) => {
+  const authUser = (req as any).user;
+  const patientId = authUser.userId;
+  
+  try {
+    const { getPatientConsents, getConsent, isConsentRevoked } = await import('./lib/redis');
+    const consentIds = await getPatientConsents(patientId);
+    
+    const consents = await Promise.all(
+      consentIds.map(async (jti) => {
+        const consent = await getConsent(jti);
+        if (!consent) return null;
+        
+        const revoked = await isConsentRevoked(jti);
+        const expiresAt = new Date(consent.expiresAt);
+        const expired = expiresAt < new Date();
+        const valid = !revoked && !expired;
+        
+        // Fetch hospital name
+        const { data: hospital } = await supabase
+          .from('hospitals')
+          .select('name')
+          .eq('id', consent.recipientHospitalId)
+          .single();
+        
+        return {
+          consentId: jti,
+          recipientId: consent.recipientId,
+          recipientHospitalId: consent.recipientHospitalId,
+          hospitalName: hospital?.name || 'Unknown',
+          scope: consent.scope,
+          grantedAt: consent.grantedAt,
+          expiresAt: consent.expiresAt,
+          valid,
+          revoked,
+          expired
+        };
+      })
+    );
+    
+    res.json({ consents: consents.filter(c => c !== null) });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'get patient consents failed');
+    res.status(500).json({ error: 'Failed to fetch consents' });
+  }
+});
+
+// Get hospital's received consents (requires hospital admin auth)
+app.get('/consent/received', requireAuth, async (req, res) => {
+  const authUser = (req as any).user;
+  
+  // Verify user is hospital staff with hospital_id
+  if (!authUser.hospitalId) {
+    return res.status(403).json({ error: 'Hospital staff access required' });
+  }
+  
+  const hospitalId = authUser.hospitalId;
+  
+  try {
+    const { getHospitalConsents, getConsent, isConsentRevoked } = await import('./lib/redis');
+    const consentIds = await getHospitalConsents(hospitalId);
+    
+    const consents = await Promise.all(
+      consentIds.map(async (jti) => {
+        const consent = await getConsent(jti);
+        if (!consent) return null;
+        
+        const revoked = await isConsentRevoked(jti);
+        const expiresAt = new Date(consent.expiresAt);
+        const expired = expiresAt < new Date();
+        const valid = !revoked && !expired;
+        
+        // Only return active consents
+        if (!valid) return null;
+        
+        return {
+          consentId: jti,
+          patientId: consent.patientId,
+          recipientId: consent.recipientId,
+          scope: consent.scope,
+          grantedAt: consent.grantedAt,
+          expiresAt: consent.expiresAt
+        };
+      })
+    );
+    
+    res.json({ consents: consents.filter(c => c !== null) });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'get hospital consents failed');
+    res.status(500).json({ error: 'Failed to fetch consents' });
   }
 });
 

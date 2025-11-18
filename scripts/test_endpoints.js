@@ -160,7 +160,7 @@ async function testEndpoints() {
   console.log('Consent JWT:', consentToken);
 
   // 5. Test EHR read endpoint (staff side)
-  console.log('Testing EHR read endpoint...');
+  console.log('\n=== Testing EHR read endpoint ===');
   try {
     const ehrRes = await axios.get(`${API_BASE_URL}/ehr/patient/${patientId}/prescriptions`, {
       headers: {
@@ -168,13 +168,85 @@ async function testEndpoints() {
         'X-Consent-Token': consentToken,
       },
     });
-    console.log('EHR prescriptions:', ehrRes.data);
+    console.log('✓ EHR prescriptions:', ehrRes.data);
   } catch (err) {
     printAxiosError(err, 'EHR read prescriptions');
   }
 
-  // 6. Test hospital dashboard (admin side)
-  console.log('Testing hospital dashboard...');
+  // 6. Test consent status endpoint
+  console.log('\n=== Testing consent status ===');
+  try {
+    const consentPayload = decodeJwtPayload(consentToken);
+    const consentId = consentPayload.jti;
+    const statusRes = await axios.get(`${API_BASE_URL}/consent/status/${consentId}`);
+    console.log('✓ Consent status:', statusRes.data);
+  } catch (err) {
+    printAxiosError(err, 'Consent status');
+  }
+
+  // 7. Test patient's consent list (GET /consent/my)
+  console.log('\n=== Testing patient consent list ===');
+  try {
+    const myConsentsRes = await axios.get(`${API_BASE_URL}/consent/my`, {
+      headers: {
+        Authorization: `Bearer ${patientToken}`,
+      },
+    });
+    console.log('✓ Patient consents:', myConsentsRes.data);
+  } catch (err) {
+    printAxiosError(err, 'Patient consent list');
+  }
+
+  // 8. Test hospital's received consents (GET /consent/received)
+  console.log('\n=== Testing hospital consent list ===');
+  try {
+    const receivedConsentsRes = await axios.get(`${API_BASE_URL}/consent/received`, {
+      headers: {
+        Authorization: `Bearer ${staffToken}`,
+      },
+    });
+    console.log('✓ Hospital received consents:', receivedConsentsRes.data);
+  } catch (err) {
+    printAxiosError(err, 'Hospital consent list');
+  }
+
+  // 9. Test consent revocation (patient side)
+  console.log('\n=== Testing consent revocation ===');
+  try {
+    const consentPayload = decodeJwtPayload(consentToken);
+    const consentId = consentPayload.jti;
+    const revokeRes = await axios.post(`${API_BASE_URL}/consent/revoke`, {
+      consentId,
+    }, {
+      headers: {
+        Authorization: `Bearer ${patientToken}`,
+      },
+    });
+    console.log('✓ Consent revoked:', revokeRes.data);
+  } catch (err) {
+    printAxiosError(err, 'Consent revoke');
+  }
+
+  // 10. Test EHR access after revocation (should fail with 403)
+  console.log('\n=== Testing EHR access after revocation (should fail) ===');
+  try {
+    const ehrRes = await axios.get(`${API_BASE_URL}/ehr/patient/${patientId}/prescriptions`, {
+      headers: {
+        Authorization: `Bearer ${staffToken}`,
+        'X-Consent-Token': consentToken,
+      },
+    });
+    console.error('✗ EHR access should have been blocked after revocation!');
+  } catch (err) {
+    if (err.response?.status === 403) {
+      console.log('✓ EHR access correctly blocked after revocation');
+    } else {
+      printAxiosError(err, 'EHR read after revoke');
+    }
+  }
+
+  // 11. Test hospital dashboard (admin side)
+  console.log('\n=== Testing hospital dashboard ===');
   try {
     const hospitalId = await resolveHospitalId(staffToken);
     try {
@@ -183,7 +255,7 @@ async function testEndpoints() {
           Authorization: `Bearer ${staffToken}`,
         },
       });
-      console.log('Dashboard:', dashboardRes.data);
+      console.log('✓ Dashboard:', dashboardRes.data);
     } catch (err) {
       printAxiosError(err, 'Hospital dashboard');
     }
