@@ -1,15 +1,149 @@
-# Samruddhi Backend — Hospital Core + Consent System
+# Samruddhi Backend — Hospital Core + Shared Redis Consent System
 
 ## ✅ Completed (Phase 1)
 
-**Infrastructure:** Express + TypeScript, Supabase (6 migrations), Upstash Redis, MongoDB Atlas  
+**Infrastructure:** Express + TypeScript, Supabase (7 migrations), Upstash Redis (shared), MongoDB Atlas  
 **Core Schema:** users, hospitals, departments, doctors, patients, beds, admissions, audit_logs + RLS  
-**Seed Data:** 3 hospitals, 8 departments, 10 doctors, 150 beds (idempotent script)  
+**Auth:** Supabase Auth for patients & staff with custom JWT claims (role, hospital_id, patient_id)  
 **Admissions:** Atomic RPCs (create with bed locking, discharge with workload updates) + endpoints  
-**Consent Flow:** JWT grant/revoke + Redis TTL + middleware validation  
-**EHR Access:** GET endpoint with requireConsent guard + MongoDB integration  
-**Read Endpoints:** beds, capacity, doctors, admissions (all with query filters)  
-**Verified:** Redis write/read ✓, MongoDB write/read ✓, RPC dry-run ✓
+**Consent Architecture:** Shared Redis between patient app and hospital backend (Option B)  
+**EHR System:** MongoDB with full schema (profile, prescriptions, test_reports, iot_devices, medical_history)  
+**Endpoints:** 25+ endpoints (hospitals, beds, doctors, admissions, consent, EHR read/write)  
+**Verified:** Redis ✓, MongoDB ✓, Supabase Auth ✓, Consent JWT ✓
+
+---
+
+## 🏗️ Architecture: Shared Redis Consent (Option B)
+
+### **Two JWT Systems**
+
+1. **Authentication JWT** (Supabase)
+   - Issued when user logs in (patient or admin)
+   - Short-lived (1 hour, auto-refreshed)
+   - Contains: `sub` (user_id), `role`, `hospital_id`, `patient_id`
+   - Used to prove WHO you are
+
+2. **Consent JWT** (Custom)
+   - Issued when patient grants access to hospital
+   - Long-lived (7 or 14 days, patient's choice)
+   - Stored in **shared Upstash Redis** (patient app + hospital backend)
+   - Used to prove patient GRANTED ACCESS
+
+### **Shared Redis Key Structure**
+
+```redis
+# Consent Record (main)
+consent:{jti}                           → Full consent record (JSON)
+  TTL: durationDays * 86400 seconds
+  Fields: { patientId, recipientId, recipientHospitalId, scope[], grantedAt, expiresAt, revoked }
+
+# Patient Index (for listing patient's consents)
+patient:{patientId}:consents            → Set of consent JTIs
+  SADD when granted, SREM when expired/revoked
+
+# Hospital Index (for listing hospital's received consents)
+hospital:{hospitalId}:consents          → Set of consent JTIs
+  SADD when granted, SREM when expired/revoked
+
+# Revocation Flag (fast check)
+consent:{jti}:revoked                   → "1" if revoked, NULL if valid
+  TTL: same as consent (auto-cleanup)
+```
+
+### **Why Shared Redis (Option B)?**
+
+✅ **Single source of truth** - Both patient app and hospital backend see same data  
+✅ **Instant revocation** - Patient revokes → hospital sees it immediately  
+✅ **No patient API needed** - Hospital doesn't call patient's server  
+✅ **Works offline** - Patient can check cached JWT locally  
+✅ **Simple architecture** - One Upstash Redis instance, shared credentials  
+
+---
+
+## 🔄 Complete Consent Flow
+
+### **1. Patient Grants Access**
+
+```http
+POST /consent/grant
+Authorization: Bearer <PATIENT_SUPABASE_JWT>
+Content-Type: application/json
+
+{
+  "recipientId": "staff-uuid",
+  "recipientHospitalId": "hospital-uuid",
+  "scope": ["profile", "prescriptions", "test_reports", "iot_devices"],
+  "durationDays": 14
+}
+```
+
+**Server Actions:**
+1. Validate patient JWT (requireAuth middleware)
+2. Extract `patientId` from `req.user.sub`
+3. Verify patient can only grant consent for themselves
+4. Generate Consent JWT with `jti` (unique consent ID)
+5. Store in shared Redis:
+   ```redis
+   SET consent:{jti} '{"patientId":"...","scope":[...],...}' EX 1209600
+   SADD patient:{patientId}:consents {jti}
+   SADD hospital:{hospitalId}:consents {jti}
+   ```
+6. Return Consent JWT to patient
+
+**Patient App Actions:**
+- Receives Consent JWT
+- Optionally caches locally for offline check
+- Shares JWT with hospital (QR code, deep link, SMS, etc.)
+
+---
+
+### **2. Hospital Accesses Patient Data**
+
+```http
+GET /ehr/patient/{patientId}/prescriptions
+Authorization: Bearer <ADMIN_SUPABASE_JWT>    # Proves admin identity
+X-Consent-Token: <CONSENT_JWT>                # Proves patient consent
+```
+
+**Middleware Validation (requireConsent):**
+1. Verify Admin JWT (Supabase)
+2. Decode Consent JWT and extract `jti`
+3. **Check shared Redis:**
+   ```redis
+   EXISTS consent:{jti}:revoked  → if 1, return 403 "Consent revoked"
+   GET consent:{jti}              → if null, return 403 "Consent expired"
+   ```
+4. Validate:
+   - `consent.hospitalId === req.user.hospital_id`
+   - `consent.patientId === req.params.id`
+   - `"prescriptions" IN consent.scope`
+5. If all pass, fetch prescriptions from MongoDB
+
+---
+
+### **3. Patient Revokes Access**
+
+```http
+POST /consent/revoke
+Authorization: Bearer <PATIENT_SUPABASE_JWT>
+Content-Type: application/json
+
+{ "consentId": "jti-uuid" }
+```
+
+**Server Actions:**
+1. Validate patient JWT
+2. Get consent: `GET consent:{consentId}`
+3. Verify ownership: `req.user.sub === consent.patientId`
+4. Mark revoked:
+   ```redis
+   SET consent:{consentId}:revoked "1" EX {remaining_ttl}
+   ```
+5. Update consent record: `{ ...consent, revoked: true }`
+
+**Result:**
+- Hospital's next request will fail with 403 (sees `consent:revoked` flag)
+- Patient app clears local cache
 
 ## 🚀 Quick Start
 
@@ -202,21 +336,397 @@ interface PatientEHR {
 - [ ] Rate limiting (Upstash)
 - [ ] `/metrics` endpoint
 
-## 📚 Docs
+---
+
+## 📚 Implementation Status
+
+### **✅ Completed**
+- Supabase Auth with custom JWT claims (role, hospital_id, patient_id)
+- Shared Redis consent architecture (Option B)
+- Complete EHR schema in MongoDB (profile, prescriptions, test_reports, iot_devices, medical_history)
+- Auth middleware (requireAuth, requireRole, requireHospital)
+- Consent middleware (requireConsent, requireConsentScope)
+- 25+ API endpoints (hospitals, beds, admissions, consent, EHR read/write)
+- Hospital dashboard with real-time stats
+- Audit logging infrastructure (8 helper functions)
+- Atomic admission RPCs (create/discharge with bed locking)
+
+### **⏳ In Progress**
+- Wire audit logs to all endpoints
+- Implement consent list endpoints (GET /consent/my, GET /consent/received)
+- Add consent status endpoint (GET /consent/status/:id)
+- Update test script for end-to-end flow
+
+### **📋 Pending**
+- Generate Supabase TypeScript types (npm run typegen)
+- Seed patient data with EHR records
+- Create test admissions via RPC
+- End-to-end testing (full consent workflow)
+- QR code generation for consent sharing
+- Patient-side Redis integration docs
+
+---
+
+## 🎯 Next Steps
+
+**Immediate (Today):**
+1. Implement consent list endpoints (my, received, status)
+2. Wire audit logging to all consent/EHR operations
+3. Update test script for complete workflow
+4. Test: grant → access → revoke → blocked flow
+
+**Phase 2 (Next Session):**
+1. Inventory management + stock tracking
+2. Transfer requests (inter-hospital resource sharing)
+3. ML predictions for capacity forecasting
+4. Admin dashboards and visualizations
+
+**Phase 3 (Production Ready):**
+1. Rate limiting (Upstash)
+2. Sentry integration
+3. Performance optimization
+4. CI/CD pipeline
+5. Deployment (Railway/Fly.io)
+
+---
+
+## 📚 Additional Documentation
 
 - Architecture: `CORE_HOSPITAL_SYSTEM.md`
+- API Reference: `API_ENDPOINTS.md`
 - Roadmap: `samruddhi_roadmap_and_dependencies.md`
 - Supabase Setup: `samruddhi_supabase_hospital_setup.md`
+
+---
+
+---
+
+## 📡 API Endpoints (Complete)
+
+### **Consent Management**
+
+#### `POST /consent/grant` (Patient Auth Required)
+Grant EHR access to hospital for specified scopes and duration.
+
+**Headers:** `Authorization: Bearer <PATIENT_SUPABASE_JWT>`
+
+**Body:**
+```json
+{
+  "recipientId": "staff-uuid",
+  "recipientHospitalId": "hospital-uuid",
+  "scope": ["profile", "prescriptions", "test_reports", "iot_devices"],
+  "durationDays": 14
+}
+```
+
+**Response:**
+```json
+{
+  "consentId": "jti-uuid",
+  "consentToken": "eyJhbGci...",
+  "expiresAt": "2025-12-01T10:00:00Z",
+  "scope": ["profile", "prescriptions"],
+  "durationDays": 14
+}
+```
+
+---
+
+#### `POST /consent/revoke` (Patient Auth Required)
+Revoke previously granted consent.
+
+**Headers:** `Authorization: Bearer <PATIENT_SUPABASE_JWT>`
+
+**Body:**
+```json
+{ "consentId": "jti-uuid" }
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Consent revoked",
+  "consentId": "jti-uuid"
+}
+```
+
+---
+
+#### `GET /consent/status/:consentId` (Optional Auth)
+Check consent validity (both patient and hospital can call).
+
+**Response:**
+```json
+{
+  "consentId": "jti-uuid",
+  "valid": true,
+  "revoked": false,
+  "expiresAt": "2025-12-01T10:00:00Z",
+  "scope": ["profile", "prescriptions"],
+  "patientId": "patient-uuid",
+  "hospitalId": "hospital-uuid"
+}
+```
+
+---
+
+#### `GET /consent/my` (Patient Auth Required)
+List all consents granted by patient.
+
+**Response:**
+```json
+{
+  "consents": [
+    {
+      "consentId": "jti-uuid",
+      "hospitalId": "hospital-uuid",
+      "hospitalName": "City General Hospital",
+      "scope": ["profile", "prescriptions"],
+      "grantedAt": "2025-11-17T10:00:00Z",
+      "expiresAt": "2025-12-01T10:00:00Z",
+      "revoked": false
+    }
+  ]
+}
+```
+
+---
+
+#### `GET /consent/received` (Hospital Admin Auth Required)
+List all consents received by hospital.
+
+**Response:**
+```json
+{
+  "consents": [
+    {
+      "consentId": "jti-uuid",
+      "patientId": "patient-uuid",
+      "scope": ["profile", "test_reports"],
+      "grantedAt": "2025-11-17T10:00:00Z",
+      "expiresAt": "2025-12-01T10:00:00Z",
+      "revoked": false
+    }
+  ]
+}
+```
+
+---
+
+### **Patient EHR Access (Requires Consent + Admin Auth)**
+
+All EHR endpoints require:
+- `Authorization: Bearer <ADMIN_SUPABASE_JWT>`
+- `X-Consent-Token: <CONSENT_JWT>`
+
+#### Read Endpoints
+
+- `GET /ehr/patient/:id` - Full EHR (filtered by consent scopes)
+- `GET /ehr/patient/:id/prescriptions` - All prescriptions
+- `GET /ehr/patient/:id/test-reports` - All test reports
+- `GET /ehr/patient/:id/medical-history` - Medical history
+- `GET /ehr/patient/:id/iot/:deviceType` - IoT logs (heart_rate, glucose, bp, spo2)
+
+#### Write Endpoints
+
+- `POST /ehr/patient/:id/prescription` - Add new prescription
+- `POST /ehr/patient/:id/test-report` - Add test report
+- `POST /ehr/patient/:id/iot-log` - Add IoT reading
+- `POST /ehr/patient/:id/medical-history` - Add medical history entry
+
+---
+
+### **Hospital Management**
+
+- `GET /hospitals` - List hospitals (discovery)
+- `GET /hospitals/:id/capacity` - Get capacity summary
+- `GET /hospitals/:id/dashboard` - Real-time stats (beds, admissions, doctor workload)
+
+### **Admissions**
+
+- `POST /admissions` - Create admission (atomic with bed locking)
+- `PATCH /admissions/:id/discharge` - Discharge patient
+- `GET /admissions?hospitalId=&active=true` - List admissions
+- `GET /admissions/:id` - Get single admission
+
+### **Resources**
+
+- `GET /beds?hospitalId=&type=&status=` - Query beds
+- `GET /doctors?hospitalId=&departmentId=` - List doctors
+
+### **Health Checks**
+
+- `GET /health/live` - Liveness probe
+- `GET /health/ready` - Readiness probe
+
+---
+
+## 🔧 Patient-Side Integration Guide
+
+### **Connect to Shared Redis**
+
+```javascript
+// React Native / Flutter / Web
+import { Redis } from '@upstash/redis';
+
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
+```
+
+### **Grant Consent Flow**
+
+```javascript
+// 1. Patient selects hospital and scopes
+const response = await fetch('https://api.samruddhi.com/consent/grant', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${patientSupabaseJWT}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    recipientId: staffId,
+    recipientHospitalId: hospitalId,
+    scope: ['profile', 'prescriptions', 'test_reports'],
+    durationDays: 14
+  })
+});
+
+const { consentId, consentToken, expiresAt } = await response.json();
+
+// 2. Cache locally (optional, for offline check)
+await AsyncStorage.setItem(`consent:${hospitalId}`, JSON.stringify({
+  consentId,
+  consentToken,
+  expiresAt,
+  scope: ['profile', 'prescriptions', 'test_reports']
+}));
+
+// 3. Share with hospital (QR code, deep link, etc.)
+generateQRCode(consentToken);
+// or
+shareViaDeepLink(`samruddhi://consent?token=${consentToken}`);
+```
+
+### **Check Consent Status**
+
+```javascript
+const status = await fetch(`https://api.samruddhi.com/consent/status/${consentId}`, {
+  headers: { 'Authorization': `Bearer ${patientSupabaseJWT}` }
+});
+
+const { valid, revoked, expiresAt } = await status.json();
+
+if (revoked) {
+  alert('Consent has been revoked');
+  await AsyncStorage.removeItem(`consent:${hospitalId}`);
+}
+```
+
+### **Revoke Consent**
+
+```javascript
+await fetch('https://api.samruddhi.com/consent/revoke', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${patientSupabaseJWT}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({ consentId })
+});
+
+// Clear local cache
+await AsyncStorage.removeItem(`consent:${hospitalId}`);
+```
+
+---
+
+## 🏥 Hospital-Side Integration Guide
+
+### **Receive Consent from Patient**
+
+```javascript
+// Patient shares via QR code or deep link
+const consentToken = scanQRCode(); // or from deep link parameter
+
+// Store in hospital's session
+sessionStorage.setItem('activeConsent', consentToken);
+```
+
+### **Access Patient EHR**
+
+```javascript
+const prescriptions = await fetch(
+  `https://api.samruddhi.com/ehr/patient/${patientId}/prescriptions`,
+  {
+    headers: {
+      'Authorization': `Bearer ${adminSupabaseJWT}`,
+      'X-Consent-Token': consentToken
+    }
+  }
+);
+
+if (prescriptions.status === 403) {
+  alert('Consent expired or revoked');
+} else {
+  const data = await prescriptions.json();
+  displayPrescriptions(data);
+}
+```
+
+### **Add Prescription**
+
+```javascript
+await fetch(`https://api.samruddhi.com/ehr/patient/${patientId}/prescription`, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${adminSupabaseJWT}`,
+    'X-Consent-Token': consentToken,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    date: '2025-11-17',
+    doctor_name: 'Dr. Smith',
+    medications: [
+      { name: 'Amoxicillin', dosage: '500mg', frequency: '3x daily', duration: '7 days' }
+    ]
+  })
+});
+```
+
+---
+
+## 🚀 Quick Start
+
+```bash
+npm install
+npm run dev          # Start server (port 3000)
+npm run build        # Compile TypeScript
+npm run seed         # Load seed data
+```
 
 ## 🔑 Environment Variables
 
 Required in `.env.local`:
 
-- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE`
-- `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
-- `MONGO_URI`
-- `JWT_SECRET`
-- `PORT` (default: 3000)
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=eyJhbGci...
+SUPABASE_SERVICE_ROLE=eyJhbGci...
+
+UPSTASH_REDIS_REST_URL=https://your-redis.upstash.io
+UPSTASH_REDIS_REST_TOKEN=AYh3bGci...
+
+MONGO_URI=mongodb+srv://...
+
+JWT_SECRET=your-jwt-secret-32-bytes
+PORT=3000
+```
+
+---
 
 ## 📦 Key NPM Scripts
 
@@ -228,38 +738,6 @@ npm run typegen          # Generate Supabase types
 npm run consent:grant    # CLI: Grant consent
 npm run consent:revoke   # CLI: Revoke consent
 ```
-
-## 🏥 API Endpoints
-
-**Admissions:**
-
-- `POST /admissions` - Create admission (atomic with bed locking)
-- `PATCH /admissions/:id/discharge` - Discharge patient
-- `GET /admissions?hospitalId=&active=true` - List admissions
-- `GET /admissions/:id` - Get single admission
-
-**Resources:**
-
-- `GET /beds?hospitalId=&type=&status=` - Query beds
-- `GET /hospitals/:id/capacity` - Get capacity summary
-- `GET /doctors?hospitalId=&departmentId=` - List doctors
-
-**Consent & EHR:**
-
-- `POST /consent/grant` - Grant EHR access (7-day TTL)
-- `POST /consent/revoke` - Revoke consent
-- `GET /ehr/patient/:id` - Read EHR (requires consent)
-
-**Health:**
-
-- `GET /health/live` - Liveness probe
-- `GET /health/ready` - Readiness probe
-
-## 🎯 Next Steps After Today
-
-**Phase 2:** Inventory management + stock tracking  
-**Phase 3:** Transfer requests (inter-hospital resource sharing)  
-**Phase 4:** ML predictions, dashboards, deployment
 
 ---
 

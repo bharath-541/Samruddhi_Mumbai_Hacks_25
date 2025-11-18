@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { signConsent, verifyConsent } from './lib/jwt';
 import { setConsent, revokeConsent, isConsentValid } from './lib/redis';
 import { requireConsent } from './middleware/consent';
+import { requireAuth } from './middleware/auth';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const app = express();
@@ -55,7 +56,7 @@ const AdmissionDischargeSchema = z.object({
 const ConsentGrantSchema = z.object({
   patientId: z.string().uuid(),
   recipientId: z.string().uuid(),
-  recipientHospitalId: z.string().uuid().optional(),
+  recipientHospitalId: z.string().uuid(), // Required for consent scope
   scope: z.array(z.enum(['profile', 'medical_history', 'prescriptions', 'test_reports', 'iot_devices'])).min(1),
   durationDays: z.number().refine(val => val === 7 || val === 14, {
     message: 'Duration must be 7 or 14 days'
@@ -185,10 +186,17 @@ app.patch('/admissions/:id/discharge', async (req, res) => {
 });
 
 // Consent grant (JWT + Redis TTL with scopes)
-app.post('/consent/grant', async (req, res) => {
+app.post('/consent/grant', requireAuth, async (req, res) => {
   const parsed = ConsentGrantSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { patientId, recipientId, recipientHospitalId, scope, durationDays } = parsed.data;
+  
+  // Verify patient is granting consent for themselves
+  const authUser = (req as any).user;
+  if (!authUser || authUser.userId !== patientId) {
+    return res.status(403).json({ error: 'Can only grant consent for yourself' });
+  }
+  
   try {
     const exp = Math.floor(Date.now() / 1000) + (durationDays * 86400);
     const jti = crypto.randomUUID();
@@ -467,6 +475,25 @@ app.get('/beds', async (req, res) => {
   } catch (e: any) {
     req.log.error({ err: e }, 'beds query failed');
     res.status(500).json({ error: 'Beds query failed' });
+  }
+});
+
+// Hospitals list (basic discovery)
+app.get('/hospitals', async (req, res) => {
+  const { limit = '10' } = req.query as any;
+  let lim = parseInt(limit as string, 10);
+  if (isNaN(lim) || lim < 1 || lim > 100) lim = 10;
+  try {
+    const { data, error } = await supabase
+      .from('hospitals')
+      .select('id, name, type, tier, created_at')
+      .order('created_at', { ascending: false })
+      .limit(lim);
+    if (error) throw error;
+    res.json(data);
+  } catch (e: any) {
+    req.log.error({ err: e }, 'hospitals list failed');
+    res.status(500).json({ error: 'Hospitals list failed' });
   }
 });
 

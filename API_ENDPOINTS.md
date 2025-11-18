@@ -9,13 +9,17 @@
 ### Health Checks
 
 #### `GET /health/live`
+
 Liveness probe - server is running
+
 ```bash
 curl http://localhost:3000/health/live
 ```
 
 #### `GET /health/ready`
+
 Readiness probe - database connection OK
+
 ```bash
 curl http://localhost:3000/health/ready
 ```
@@ -25,8 +29,10 @@ curl http://localhost:3000/health/ready
 ### Beds Management
 
 #### `GET /beds`
+
 Query available beds by hospital, type, and status
 **Query Parameters:**
+
 - `hospitalId` (required): UUID
 - `type` (optional): `general` | `icu` | `nicu` | `picu` | `emergency` | `isolation`
 - `status` (optional): `available` | `occupied` | `maintenance` | `reserved`
@@ -40,14 +46,18 @@ curl "http://localhost:3000/beds?hospitalId=11111111-1111-1111-1111-111111111111
 ### Hospital Capacity
 
 #### `GET /hospitals/:id/capacity`
+
 Get capacity summary for a specific hospital
+
 ```bash
 curl http://localhost:3000/hospitals/11111111-1111-1111-1111-111111111111/capacity
 ```
 
 #### `GET /hospitals/:id/dashboard`
+
 **Real-time hospital dashboard** with comprehensive stats
 **Returns:**
+
 - Beds breakdown by type (total, available, occupied, maintenance)
 - Active admissions count
 - Doctor workload by specialization
@@ -58,6 +68,7 @@ curl http://localhost:3000/hospitals/11111111-1111-1111-1111-111111111111/dashbo
 ```
 
 **Example Response:**
+
 ```json
 {
   "hospital": {
@@ -66,7 +77,12 @@ curl http://localhost:3000/hospitals/11111111-1111-1111-1111-111111111111/dashbo
   },
   "beds": {
     "icu": { "total": 20, "available": 5, "occupied": 15, "maintenance": 0 },
-    "general": { "total": 50, "available": 30, "occupied": 18, "maintenance": 2 }
+    "general": {
+      "total": 50,
+      "available": 30,
+      "occupied": 18,
+      "maintenance": 2
+    }
   },
   "active_admissions": 33,
   "doctors": {
@@ -85,8 +101,10 @@ curl http://localhost:3000/hospitals/11111111-1111-1111-1111-111111111111/dashbo
 ### Doctors
 
 #### `GET /doctors`
+
 Query doctors by hospital, department, duty status
 **Query Parameters:**
+
 - `hospitalId` (required): UUID
 - `departmentId` (optional): UUID
 - `isOnDuty` (optional): `true` | `false`
@@ -101,8 +119,10 @@ curl "http://localhost:3000/doctors?hospitalId=11111111-1111-1111-1111-111111111
 ### Admissions
 
 #### `POST /admissions`
+
 Create new admission (atomic operation with bed locking)
 **Body:**
+
 ```json
 {
   "hospitalId": "11111111-1111-1111-1111-111111111111",
@@ -114,6 +134,7 @@ Create new admission (atomic operation with bed locking)
 ```
 
 **Effects:**
+
 - Locks and assigns bed (FOR UPDATE SKIP LOCKED)
 - Increments doctor workload
 - Updates hospital capacity_summary
@@ -126,8 +147,10 @@ curl -X POST http://localhost:3000/admissions \
 ```
 
 #### `PATCH /admissions/:id/discharge`
+
 Discharge patient (atomic operation)
 **Body:**
+
 ```json
 {
   "dischargeType": "normal",
@@ -136,6 +159,7 @@ Discharge patient (atomic operation)
 ```
 
 **Effects:**
+
 - Marks admission as discharged
 - Frees bed (status → available)
 - Decrements doctor workload
@@ -149,8 +173,10 @@ curl -X PATCH http://localhost:3000/admissions/admission-id/discharge \
 ```
 
 #### `GET /admissions`
+
 Query admissions by hospital, status, patient, doctor
 **Query Parameters:**
+
 - `hospitalId` (required): UUID
 - `active` (optional): `true` | `false`
 - `patientId` (optional): UUID
@@ -161,7 +187,9 @@ curl "http://localhost:3000/admissions?hospitalId=...&active=true"
 ```
 
 #### `GET /admissions/:id`
+
 Get single admission details
+
 ```bash
 curl http://localhost:3000/admissions/admission-id
 ```
@@ -173,8 +201,10 @@ curl http://localhost:3000/admissions/admission-id
 ### Grant Consent
 
 #### `POST /consent/grant`
+
 Patient grants EHR access consent to hospital/staff
 **Body:**
+
 ```json
 {
   "patientId": "patient-uuid",
@@ -186,6 +216,7 @@ Patient grants EHR access consent to hospital/staff
 ```
 
 **Scope Options:**
+
 - `profile` - Basic patient information
 - `medical_history` - Past conditions and treatments
 - `prescriptions` - Medications and prescriptions
@@ -195,6 +226,7 @@ Patient grants EHR access consent to hospital/staff
 **Duration:** `7` or `14` days only
 
 **Returns:**
+
 ```json
 {
   "consentId": "uuid",
@@ -214,8 +246,10 @@ curl -X POST http://localhost:3000/consent/grant \
 ### Revoke Consent
 
 #### `POST /consent/revoke`
+
 Patient revokes consent (immediate effect)
 **Body:**
+
 ```json
 {
   "consentId": "uuid"
@@ -233,6 +267,7 @@ curl -X POST http://localhost:3000/consent/revoke \
 ## 📋 Patient EHR Endpoints
 
 **All EHR endpoints require:**
+
 1. `Authorization: Bearer <staff_jwt>` - Staff authentication (Supabase Auth)
 2. `X-Consent-Token: <consent_jwt>` - Valid consent token from patient
 3. Consent must include required scope for the resource
@@ -242,12 +277,15 @@ curl -X POST http://localhost:3000/consent/revoke \
 ### Read Endpoints
 
 #### `GET /ehr/patient/:id`
+
 Get complete patient EHR (filtered by consent scopes)
 **Headers:**
+
 - `Authorization: Bearer <staff_jwt>`
 - `X-Consent-Token: <consent_jwt>`
 
 **Returns:** All data patient consented to share
+
 ```bash
 curl http://localhost:3000/ehr/patient/patient-uuid \
   -H "Authorization: Bearer staff-jwt" \
@@ -255,7 +293,9 @@ curl http://localhost:3000/ehr/patient/patient-uuid \
 ```
 
 #### `GET /ehr/patient/:id/prescriptions`
+
 Get all prescriptions (requires `prescriptions` scope)
+
 ```bash
 curl http://localhost:3000/ehr/patient/patient-uuid/prescriptions \
   -H "Authorization: Bearer staff-jwt" \
@@ -263,7 +303,9 @@ curl http://localhost:3000/ehr/patient/patient-uuid/prescriptions \
 ```
 
 #### `GET /ehr/patient/:id/test-reports`
+
 Get all test reports (requires `test_reports` scope)
+
 ```bash
 curl http://localhost:3000/ehr/patient/patient-uuid/test-reports \
   -H "Authorization: Bearer staff-jwt" \
@@ -271,7 +313,9 @@ curl http://localhost:3000/ehr/patient/patient-uuid/test-reports \
 ```
 
 #### `GET /ehr/patient/:id/medical-history`
+
 Get medical history (requires `medical_history` scope)
+
 ```bash
 curl http://localhost:3000/ehr/patient/patient-uuid/medical-history \
   -H "Authorization: Bearer staff-jwt" \
@@ -279,8 +323,10 @@ curl http://localhost:3000/ehr/patient/patient-uuid/medical-history \
 ```
 
 #### `GET /ehr/patient/:id/iot/:deviceType`
+
 Get IoT device logs (requires `iot_devices` scope)
 **Device Types:** `heart_rate`, `glucose`, `blood_pressure`, `spo2`, `temperature`
+
 ```bash
 curl http://localhost:3000/ehr/patient/patient-uuid/iot/heart_rate \
   -H "Authorization: Bearer staff-jwt" \
@@ -292,9 +338,11 @@ curl http://localhost:3000/ehr/patient/patient-uuid/iot/heart_rate \
 ### Write Endpoints
 
 #### `POST /ehr/patient/:id/prescription`
+
 Add prescription (requires `prescriptions` scope)
 **Headers:** Authorization + X-Consent-Token
 **Body:**
+
 ```json
 {
   "date": "2025-11-17",
@@ -328,8 +376,10 @@ curl -X POST http://localhost:3000/ehr/patient/patient-uuid/prescription \
 ```
 
 #### `POST /ehr/patient/:id/test-report`
+
 Add test report (requires `test_reports` scope)
 **Body:**
+
 ```json
 {
   "test_name": "Complete Blood Count",
@@ -355,8 +405,10 @@ curl -X POST http://localhost:3000/ehr/patient/patient-uuid/test-report \
 ```
 
 #### `POST /ehr/patient/:id/iot-log`
+
 Add IoT device reading (requires `iot_devices` scope)
 **Body:**
+
 ```json
 {
   "device_type": "heart_rate",
@@ -368,6 +420,7 @@ Add IoT device reading (requires `iot_devices` scope)
 ```
 
 **Device Types:**
+
 - `heart_rate` - BPM readings
 - `glucose` - Blood sugar in mg/dL
 - `blood_pressure` - Systolic/diastolic
@@ -383,8 +436,10 @@ curl -X POST http://localhost:3000/ehr/patient/patient-uuid/iot-log \
 ```
 
 #### `POST /ehr/patient/:id/medical-history`
+
 Add medical history entry (requires `medical_history` scope)
 **Body:**
+
 ```json
 {
   "date": "2025-01-15",
@@ -409,12 +464,14 @@ curl -X POST http://localhost:3000/ehr/patient/patient-uuid/medical-history \
 ## 🔒 Authentication Flow
 
 ### Patient Flow
+
 1. Patient signs up/logs in via Supabase Auth
 2. Gets Supabase JWT (auth token)
 3. Calls `/consent/grant` to create consent token
 4. Shares consent token (QR code/text) with hospital
 
 ### Hospital Staff Flow
+
 1. Staff logs in via Supabase Auth
 2. Gets staff JWT with claims: `role`, `hospital_id`
 3. Receives consent token from patient
@@ -423,7 +480,9 @@ curl -X POST http://localhost:3000/ehr/patient/patient-uuid/medical-history \
    - `X-Consent-Token: <consent_jwt>`
 
 ### Consent Validation
+
 Every EHR request validates:
+
 1. ✅ Staff JWT is valid (Supabase Auth)
 2. ✅ Consent JWT is valid (signature + expiry)
 3. ✅ Consent record exists in Redis (not revoked)
@@ -435,12 +494,14 @@ Every EHR request validates:
 ## 📊 Audit Logs
 
 All critical operations are logged to `audit_logs` table:
+
 - ✅ Admission create/discharge
 - ✅ Consent grant/revoke
 - ✅ EHR read operations
 - ✅ EHR write operations
 
 **Captured Data:**
+
 - `user_id`, `hospital_id`, `action`, `resource_type`, `resource_id`
 - `changes` (before/after state)
 - `ip_address`, `user_agent`, `request_id`, `timestamp`
