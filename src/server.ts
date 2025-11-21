@@ -727,6 +727,322 @@ app.get('/consent/received', requireAuth, async (req, res) => {
   }
 });
 
+// ============================================================================
+// PATIENT SELF-SERVICE EHR (No Consent Required)
+// ============================================================================
+
+// Get complete patient EHR (self-access)
+app.get('/ehr/my', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Patient access required' });
+  }
+
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+    const ehr = await db.collection('ehr_records').findOne({ patient_id: user.patientId });
+
+    if (!ehr) {
+      return res.status(404).json({ error: 'EHR not found' });
+    }
+
+    res.json({
+      patientId: ehr.patient_id,
+      abhaId: ehr.abha_id,
+      profile: ehr.profile,
+      prescriptions: ehr.prescriptions || [],
+      testReports: ehr.test_reports || [],
+      medicalHistory: ehr.medical_history || [],
+      iotDevices: ehr.iot_devices || []
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Failed to fetch patient EHR');
+    res.status(500).json({ error: 'Failed to fetch EHR' });
+  }
+});
+
+// Get own prescriptions
+app.get('/ehr/my/prescriptions', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Patient access required' });
+  }
+
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+    const ehr = await db.collection('ehr_records').findOne({ patient_id: user.patientId });
+
+    if (!ehr) {
+      return res.status(404).json({ error: 'EHR not found' });
+    }
+
+    res.json({ prescriptions: ehr.prescriptions || [] });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Failed to fetch prescriptions');
+    res.status(500).json({ error: 'Failed to fetch prescriptions' });
+  }
+});
+
+// Get own test reports
+app.get('/ehr/my/test-reports', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Patient access required' });
+  }
+
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+    const ehr = await db.collection('ehr_records').findOne({ patient_id: user.patientId });
+
+    if (!ehr) {
+      return res.status(404).json({ error: 'EHR not found' });
+    }
+
+    res.json({ testReports: ehr.test_reports || [] });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Failed to fetch test reports');
+    res.status(500).json({ error: 'Failed to fetch test reports' });
+  }
+});
+
+// Get own medical history
+app.get('/ehr/my/medical-history', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Patient access required' });
+  }
+
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+    const ehr = await db.collection('ehr_records').findOne({ patient_id: user.patientId });
+
+    if (!ehr) {
+      return res.status(404).json({ error: 'EHR not found' });
+    }
+
+    res.json({ medicalHistory: ehr.medical_history || [] });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Failed to fetch medical history');
+    res.status(500).json({ error: 'Failed to fetch medical history' });
+  }
+});
+
+// Get own IoT device data
+app.get('/ehr/my/iot/:deviceType', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  const { deviceType } = req.params;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Patient access required' });
+  }
+
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+    const ehr = await db.collection('ehr_records').findOne({ patient_id: user.patientId });
+
+    if (!ehr) {
+      return res.status(404).json({ error: 'EHR not found' });
+    }
+
+    const devices = ehr.iot_devices || [];
+    const deviceData = devices.find((d: any) => d.device_type === deviceType);
+
+    if (!deviceData) {
+      return res.json({ deviceType, logs: [] });
+    }
+
+    res.json({
+      deviceType: deviceData.device_type,
+      deviceId: deviceData.device_id,
+      logs: deviceData.logs || []
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Failed to fetch IoT data');
+    res.status(500).json({ error: 'Failed to fetch IoT data' });
+  }
+});
+
+// Add own prescription (old prescription from another hospital)
+app.post('/ehr/my/prescription', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Patient access required' });
+  }
+
+  const parsed = PrescriptionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+
+    await db.collection('ehr_records').updateOne(
+      { patient_id: user.patientId },
+      {
+        $push: { prescriptions: { ...parsed.data, added_by: 'patient', added_at: new Date() } } as any,
+        $set: { updated_at: new Date() }
+      }
+    );
+
+    res.status(201).json({ success: true, message: 'Prescription added to your records' });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Failed to add prescription');
+    res.status(500).json({ error: 'Failed to add prescription' });
+  }
+});
+
+// Add own test report
+app.post('/ehr/my/test-report', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Patient access required' });
+  }
+
+  const parsed = TestReportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+
+    await db.collection('ehr_records').updateOne(
+      { patient_id: user.patientId },
+      {
+        $push: { test_reports: { ...parsed.data, added_by: 'patient', added_at: new Date() } } as any,
+        $set: { updated_at: new Date() }
+      }
+    );
+
+    res.status(201).json({ success: true, message: 'Test report added to your records' });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Failed to add test report');
+    res.status(500).json({ error: 'Failed to add test report' });
+  }
+});
+
+// Add own medical history entry
+app.post('/ehr/my/medical-history', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Patient access required' });
+  }
+
+  const parsed = MedicalHistorySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+
+    await db.collection('ehr_records').updateOne(
+      { patient_id: user.patientId },
+      {
+        $push: { medical_history: { ...parsed.data, added_by: 'patient', added_at: new Date() } } as any,
+        $set: { updated_at: new Date() }
+      }
+    );
+
+    res.status(201).json({ success: true, message: 'Medical history entry added' });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Failed to add medical history');
+    res.status(500).json({ error: 'Failed to add medical history' });
+  }
+});
+
+// Add own IoT device log
+app.post('/ehr/my/iot-log', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Patient access required' });
+  }
+
+  const parsed = IoTLogSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+    const { device_type, device_id, value, unit, context } = parsed.data;
+
+    // Check if device exists, if not create it
+    const ehr = await db.collection('ehr_records').findOne({ patient_id: user.patientId });
+    const devices = ehr?.iot_devices || [];
+    const deviceIndex = devices.findIndex((d: any) => d.device_type === device_type && d.device_id === device_id);
+
+    if (deviceIndex === -1) {
+      // New device, create it
+      await db.collection('ehr_records').updateOne(
+        { patient_id: user.patientId },
+        {
+          $push: {
+            iot_devices: {
+              device_type,
+              device_id,
+              logs: [{
+                timestamp: new Date(),
+                value,
+                unit,
+                context
+              }]
+            }
+          } as any,
+          $set: { updated_at: new Date() }
+        }
+      );
+    } else {
+      // Existing device, add log
+      await db.collection('ehr_records').updateOne(
+        {
+          patient_id: user.patientId,
+          'iot_devices.device_type': device_type,
+          'iot_devices.device_id': device_id
+        },
+        {
+          $push: {
+            'iot_devices.$.logs': {
+              timestamp: new Date(),
+              value,
+              unit,
+              context
+            }
+          } as any,
+          $set: { updated_at: new Date() }
+        }
+      );
+    }
+
+    res.status(201).json({ success: true, message: 'IoT log added' });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Failed to add IoT log');
+    res.status(500).json({ error: 'Failed to add IoT log' });
+  }
+});
+
+// ============================================================================
+// HOSPITAL EHR ACCESS (Requires Consent)
+// ============================================================================
+
 // EHR read (requires consent middleware with scope filtering)
 app.get('/ehr/patient/:id', requireConsent, async (req, res) => {
   const patientId = req.params.id;
