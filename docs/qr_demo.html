@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Samruddhi QR Consent Demo</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .card { border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        button { background: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }
+        input { padding: 8px; width: 300px; }
+        #qrImage { margin-top: 20px; max-width: 200px; }
+    </style>
+</head>
+<body>
+    <h1>🏥 Samruddhi Consent QR Demo</h1>
+
+    <div class="card">
+        <h2>Patient: Generate QR</h2>
+        <p>Enter a valid Consent ID and Token (from /consent/grant)</p>
+        <input type="text" id="consentId" placeholder="Consent ID (UUID)">
+        <input type="text" id="token" placeholder="Consent Token (JWT)">
+        <br><br>
+        <button onclick="generateQR()">Generate QR Code</button>
+        <div id="qrResult"></div>
+    </div>
+
+    <div class="card">
+        <h2>Doctor: Scan QR</h2>
+        <p>Simulate scanning by pasting the QR data here</p>
+        <textarea id="scanData" rows="4" style="width: 100%" placeholder='{"type":"samruddhi_consent",...}'></textarea>
+        <br><br>
+        <button onclick="scanQR()">Verify Consent</button>
+        <pre id="scanResult"></pre>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:3000';
+        // NOTE: In real app, you need the Auth Bearer token for these calls
+        const AUTH_TOKEN = 'PASTE_YOUR_AUTH_TOKEN_HERE'; 
+
+        async function generateQR() {
+            const consentId = document.getElementById('consentId').value;
+            const token = document.getElementById('token').value;
+            
+            try {
+                const res = await fetch(`${API_URL}/consent/${consentId}/qr?token=${token}`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
+                const data = await res.json();
+                
+                if (data.qrImage) {
+                    document.getElementById('qrResult').innerHTML = `
+                        <img src="${data.qrImage}" id="qrImage">
+                        <p>Scan this code to verify consent</p>
+                    `;
+                    // Auto-fill scan data for demo
+                    const qrData = JSON.stringify({ type: 'samruddhi_consent', consentId, token });
+                    document.getElementById('scanData').value = qrData;
+                } else {
+                    alert('Error: ' + JSON.stringify(data));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function scanQR() {
+            const qrData = document.getElementById('scanData').value;
+            
+            try {
+                const res = await fetch(`${API_URL}/consent/scan`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    },
+                    body: JSON.stringify({ qrData })
+                });
+                const data = await res.json();
+                document.getElementById('scanResult').textContent = JSON.stringify(data, null, 2);
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+    </script>
+</body>
+</html>

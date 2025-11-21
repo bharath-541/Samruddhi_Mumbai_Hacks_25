@@ -12,6 +12,7 @@ import { signConsent, verifyConsent } from './lib/jwt';
 import { setConsent, revokeConsent, isConsentValid, addToPatientIndex, addToHospitalIndex } from './lib/redis';
 import { requireConsent } from './middleware/consent';
 import { requireAuth } from './middleware/auth';
+import QRCode from 'qrcode';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const app = express();
@@ -724,6 +725,127 @@ app.get('/consent/received', requireAuth, async (req, res) => {
   } catch (e: any) {
     req.log.error({ err: e }, 'get hospital consents failed');
     res.status(500).json({ error: 'Failed to fetch consents' });
+  }
+});
+
+// Generate QR code for consent
+app.get('/consent/:consentId/qr', requireAuth, async (req, res) => {
+  const { consentId } = req.params;
+
+  try {
+    // 1. Verify consent exists and is valid
+    const { getConsent } = await import('./lib/redis');
+    const consent = await getConsent(consentId);
+
+    if (!consent) {
+      return res.status(404).json({ error: 'Consent not found' });
+    }
+
+    if (consent.revoked) {
+      return res.status(403).json({ error: 'Consent revoked' });
+    }
+
+    if (new Date(consent.expiresAt) < new Date()) {
+      return res.status(403).json({ error: 'Consent expired' });
+    }
+
+    // 2. Get consent data (we need the token)
+    // In a real app, we might store the token or regenerate it.
+    // For now, we'll assume the client sends the token in the query param or we regenerate it.
+    // BETTER APPROACH: The QR code should contain the CONSENT TOKEN, not just the ID.
+    // But since we don't store the full token in Redis (only validity), we need the client to provide it
+    // OR we regenerate it if we have the data.
+
+    // Simplification for MVP: The QR code will contain a JSON object with the consentId and a "scan_url".
+    // The doctor's app will scan it, then call the scan endpoint.
+
+    // Wait, the requirement is to share the CONSENT TOKEN.
+    // If the patient is viewing this, they should have the token.
+    // Let's assume the patient provides the token in the query param ?token=...
+    // Security note: Token in URL is generally bad, but for a short-lived QR generation it's acceptable-ish for MVP.
+    // Better: POST to generate QR.
+
+    const token = req.query.token as string;
+    if (!token) {
+      return res.status(400).json({ error: 'Consent token required' });
+    }
+
+    // Verify token matches ID
+    try {
+      const decoded = verifyConsent(token);
+      if (decoded.jti !== consentId) {
+        return res.status(400).json({ error: 'Token does not match consent ID' });
+      }
+    } catch (e) {
+      return res.status(400).json({ error: 'Invalid token' });
+    }
+
+    // Generate QR Code
+    // Data format: JSON string
+    const qrData = JSON.stringify({
+      type: 'samruddhi_consent',
+      consentId,
+      token
+    });
+
+    const qrImage = await QRCode.toDataURL(qrData);
+
+    res.json({
+      consentId,
+      qrImage // Base64 encoded image
+    });
+
+  } catch (e: any) {
+    req.log.error({ err: e }, 'QR generation failed');
+    res.status(500).json({ error: 'Failed to generate QR code' });
+  }
+});
+
+// Scan QR code (Doctor scans patient's QR)
+app.post('/consent/scan', requireAuth, async (req, res) => {
+  const { qrData } = req.body;
+
+  if (!qrData) {
+    return res.status(400).json({ error: 'QR data required' });
+  }
+
+  try {
+    // Parse QR data
+    let data;
+    try {
+      data = JSON.parse(qrData);
+    } catch (e) {
+      return res.status(400).json({ error: 'Invalid QR format' });
+    }
+
+    if (data.type !== 'samruddhi_consent' || !data.token) {
+      return res.status(400).json({ error: 'Invalid Samruddhi consent QR' });
+    }
+
+    // Verify Token
+    const decoded = verifyConsent(data.token);
+
+    // Check if revoked/expired in Redis
+    const isValid = await isConsentValid(decoded.jti, { recipientId: decoded.aud });
+    if (!isValid) {
+      return res.status(403).json({ error: 'Consent has been revoked or expired' });
+    }
+
+    // Return consent details
+    res.json({
+      valid: true,
+      consent: {
+        consentId: decoded.jti,
+        patientId: decoded.sub,
+        scope: decoded.scope,
+        expiresAt: new Date(decoded.exp * 1000),
+        hospitalId: decoded.hospital_id
+      }
+    });
+
+  } catch (e: any) {
+    req.log.error({ err: e }, 'QR scan failed');
+    res.status(400).json({ error: 'Invalid or expired consent token' });
   }
 });
 
