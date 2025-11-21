@@ -136,13 +136,13 @@ const MedicalHistorySchema = z.object({
 
 // Patient Registration & Profile Schemas
 const PatientRegistrationSchema = z.object({
-  abhaId: z.string().regex(/^\d{4}-\d{4}-\d{4}$/, 'ABHA ID must be in format: 1234-5678-9012'),
+  abhaId: z.string().regex(/^\d{4}-\d{4}-\d{4}$/, 'ABHA ID must be in format: 1234-5678-9012').optional(), // Optional - auto-generated if not provided
   name: z.string().min(2).max(100),
   dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'DOB must be in format: YYYY-MM-DD'),
   gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say']),
   bloodGroup: z.string().optional(),
-  phone: z.string().regex(/^\+91-\d{10}$/, 'Phone must be in format: +91-9876543210'),
-  emergencyContact: z.string().regex(/^\+91-\d{10}$/),
+  phone: z.string().regex(/^\+91-\d{10}$/, 'Phone must be in format: +91-9876543210').optional(), // Optional
+  emergencyContact: z.string().regex(/^\+91-\d{10}$/).optional(), // Optional
   address: z.object({
     street: z.string().min(1),
     city: z.string().min(1),
@@ -163,7 +163,10 @@ const PatientUpdateSchema = z.object({
 });
 
 const PatientSearchSchema = z.object({
-  abha_id: z.string().regex(/^\d{4}-\d{4}-\d{4}$/)
+  abha_id: z.string().optional(), // Search by ABHA ID (if provided)
+  email: z.string().email().optional() // OR search by email
+}).refine(data => data.abha_id || data.email, {
+  message: 'Either abha_id or email must be provided'
 });
 
 // Health
@@ -189,44 +192,74 @@ app.post('/patients/register', async (req, res) => {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
 
-  const { abhaId, name, dob, gender, bloodGroup, phone, emergencyContact, address } = parsed.data;
+  let { abhaId, name, dob, gender, bloodGroup, phone, emergencyContact, address } = parsed.data;
 
-  // Get user ID from Supabase auth header (if available)
+  // Get user info from Supabase auth header (REQUIRED for email-based registration)
   const authHeader = req.headers.authorization;
   let userId: string | undefined;
+  let userEmail: string | undefined;
 
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.replace('Bearer ', '');
     try {
       const { data } = await supabase.auth.getUser(token);
       userId = data.user?.id;
+      userEmail = data.user?.email;
     } catch (e) {
-      req.log.warn('Patient registration without valid JWT');
+      return res.status(401).json({ error: 'Valid authentication required for registration' });
     }
+  } else {
+    return res.status(401).json({ error: 'Authentication required for registration' });
+  }
+
+  if (!userId || !userEmail) {
+    return res.status(401).json({ error: 'Could not extract user information from token' });
   }
 
   try {
-    // Check if ABHA ID already exists
-    const { data: existing, error: checkError } = await supabase
+    // Auto-generate ABHA-like ID if not provided
+    if (!abhaId) {
+      const timestamp = Date.now().toString().slice(-8);
+      const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      abhaId = `AUTO-${timestamp}-${random}`;
+      req.log.info({ userId, generatedAbhaId: abhaId }, 'Auto-generated ABHA ID');
+    }
+
+    // Check if ABHA ID already exists (only if provided)
+    if (abhaId && !abhaId.startsWith('AUTO-')) {
+      const { data: existing } = await supabase
+        .from('patients')
+        .select('id')
+        .eq('abha_id', abhaId)
+        .maybeSingle();
+
+      if (existing) {
+        return res.status(409).json({ error: 'ABHA ID already registered' });
+      }
+    }
+
+    // Check if user already has patient record
+    const { data: existingPatient } = await supabase
       .from('patients')
       .select('id')
-      .eq('abha_id', abhaId)
-      .single();
+      .eq('ehr_id', userId)
+      .maybeSingle();
 
-    if (existing) {
-      return res.status(409).json({ error: 'ABHA ID already registered' });
+    if (existingPatient) {
+      return res.status(409).json({ error: 'User already registered as patient' });
     }
 
     // Create patient record in Postgres (matching actual schema)
     const { data: patient, error: insertError } = await supabase
       .from('patients')
       .insert({
+        ehr_id: userId, // Link to Supabase Auth user
         abha_id: abhaId,
         name_encrypted: name, // TODO: Encrypt in Phase 2, for now storing as text
         dob_encrypted: dob,
         gender,
         blood_group: bloodGroup,
-        emergency_contact_encrypted: emergencyContact
+        emergency_contact_encrypted: emergencyContact || null
       })
       .select()
       .single();
@@ -246,9 +279,10 @@ app.post('/patients/register', async (req, res) => {
       abha_id: abhaId,
       profile: {
         name,
+        email: userEmail, // Store email from Supabase Auth
         dob,
         blood_group: bloodGroup || '',
-        phone,
+        phone: phone || null, // Optional
         address
       },
       prescriptions: [],
@@ -261,13 +295,14 @@ app.post('/patients/register', async (req, res) => {
 
     await ehrCollection.insertOne(ehrDoc);
 
-    req.log.info({ patientId: patient.id, abhaId }, 'Patient registered successfully');
+    req.log.info({ patientId: patient.id, abhaId, email: userEmail }, 'Patient registered successfully');
 
     res.status(201).json({
       success: true,
       patient: {
         id: patient.id,
         abhaId: patient.abha_id,
+        email: userEmail,
         name,
         createdAt: patient.created_at
       },
@@ -279,7 +314,7 @@ app.post('/patients/register', async (req, res) => {
   }
 });
 
-// Search patient by ABHA ID (must come BEFORE /:id route)
+// Search patient by ABHA ID or email (must come BEFORE /:id route)
 app.get('/patients/search', async (req, res) => {
   const parsed = PatientSearchSchema.safeParse(req.query);
 
@@ -287,24 +322,49 @@ app.get('/patients/search', async (req, res) => {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
 
-  const { abha_id } = parsed.data;
+  const { abha_id, email } = parsed.data;
 
   try {
-    const { data: patient, error } = await supabase
-      .from('patients')
-      .select('id, abha_id, name_encrypted, gender, blood_group, created_at')
-      .eq('abha_id', abha_id)
-      .maybeSingle();
+    let patient;
 
-    if (error) {
-      req.log.error({ err: error }, 'Patient search error');
-      return res.status(500).json({ error: 'Search failed' });
+    if (abha_id) {
+      // Search by ABHA ID in Postgres
+      const { data, error } = await supabase
+        .from('patients')
+        .select('id, ehr_id, abha_id, name_encrypted, gender, blood_group, created_at')
+        .eq('abha_id', abha_id)
+        .maybeSingle();
+
+      if (error) {
+        req.log.error({ err: error }, 'Patient search error');
+        return res.status(500).json({ error: 'Search failed' });
+      }
+      patient = data;
+    } else if (email) {
+      // Search by email - need to check MongoDB for email, then lookup in Postgres
+      const { getMongo } = await import('./lib/mongo');
+      const db = await getMongo();
+      const ehrRecord = await db.collection('ehr_records').findOne({ 'profile.email': email });
+
+      if (ehrRecord) {
+        const { data, error } = await supabase
+          .from('patients')
+          .select('id, ehr_id, abha_id, name_encrypted, gender, blood_group, created_at')
+          .eq('id', ehrRecord.patient_id)
+          .maybeSingle();
+
+        if (error) {
+          req.log.error({ err: error }, 'Patient search error');
+          return res.status(500).json({ error: 'Search failed' });
+        }
+        patient = data;
+      }
     }
 
     if (!patient) {
       return res.json({
         found: false,
-        message: 'No patient found with this ABHA ID'
+        message: `No patient found with this ${abha_id ? 'ABHA ID' : 'email'}`
       });
     }
 
