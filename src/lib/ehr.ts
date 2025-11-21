@@ -1,4 +1,4 @@
-import { Db } from 'mongodb';
+ import { Db } from 'mongodb';
 import { getMongo } from './mongo';
 import {
   PatientEHR,

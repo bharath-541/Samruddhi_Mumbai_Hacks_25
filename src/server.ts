@@ -134,6 +134,38 @@ const MedicalHistorySchema = z.object({
   hospital_name: z.string().optional()
 });
 
+// Patient Registration & Profile Schemas
+const PatientRegistrationSchema = z.object({
+  abhaId: z.string().regex(/^\d{4}-\d{4}-\d{4}$/, 'ABHA ID must be in format: 1234-5678-9012'),
+  name: z.string().min(2).max(100),
+  dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'DOB must be in format: YYYY-MM-DD'),
+  gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say']),
+  bloodGroup: z.string().optional(),
+  phone: z.string().regex(/^\+91-\d{10}$/, 'Phone must be in format: +91-9876543210'),
+  emergencyContact: z.string().regex(/^\+91-\d{10}$/),
+  address: z.object({
+    street: z.string().min(1),
+    city: z.string().min(1),
+    state: z.string().min(1),
+    pincode: z.string().regex(/^\d{6}$/, 'Pincode must be 6 digits')
+  })
+});
+
+const PatientUpdateSchema = z.object({
+  phone: z.string().regex(/^\+91-\d{10}$/).optional(),
+  emergencyContact: z.string().regex(/^\+91-\d{10}$/).optional(),
+  address: z.object({
+    street: z.string().min(1),
+    city: z.string().min(1),
+    state: z.string().min(1),
+    pincode: z.string().regex(/^\d{6}$/)
+  }).optional()
+});
+
+const PatientSearchSchema = z.object({
+  abha_id: z.string().regex(/^\d{4}-\d{4}-\d{4}$/)
+});
+
 // Health
 app.get('/health/live', (_req, res) => res.json({ status: 'ok' }));
 app.get('/health/ready', async (_req, res) => {
@@ -145,6 +177,241 @@ app.get('/health/ready', async (_req, res) => {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
+
+// ============================================================================
+// PATIENT REGISTRATION & PROFILE MANAGEMENT
+// ============================================================================
+
+// Patient Registration (called after Supabase Auth signup)
+app.post('/patients/register', async (req, res) => {
+  const parsed = PatientRegistrationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { abhaId, name, dob, gender, bloodGroup, phone, emergencyContact, address } = parsed.data;
+
+  // Get user ID from Supabase auth header (if available)
+  const authHeader = req.headers.authorization;
+  let userId: string | undefined;
+
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.replace('Bearer ', '');
+    try {
+      const { data } = await supabase.auth.getUser(token);
+      userId = data.user?.id;
+    } catch (e) {
+      req.log.warn('Patient registration without valid JWT');
+    }
+  }
+
+  try {
+    // Check if ABHA ID already exists
+    const { data: existing, error: checkError } = await supabase
+      .from('patients')
+      .select('id')
+      .eq('abha_id', abhaId)
+      .single();
+
+    if (existing) {
+      return res.status(409).json({ error: 'ABHA ID already registered' });
+    }
+
+    // Create patient record in Postgres (matching actual schema)
+    const { data: patient, error: insertError } = await supabase
+      .from('patients')
+      .insert({
+        abha_id: abhaId,
+        name_encrypted: name, // TODO: Encrypt in Phase 2, for now storing as text
+        dob_encrypted: dob,
+        gender,
+        blood_group: bloodGroup,
+        emergency_contact_encrypted: emergencyContact
+      })
+      .select()
+      .single();
+
+    if (insertError) {
+      req.log.error({ err: insertError }, 'Patient insert failed');
+      return res.status(500).json({ error: 'Patient registration failed' });
+    }
+
+    // Create initial EHR document in MongoDB
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+    const ehrCollection = db.collection('ehr_records');
+
+    const ehrDoc = {
+      patient_id: patient.id,
+      abha_id: abhaId,
+      profile: {
+        name,
+        dob,
+        blood_group: bloodGroup || '',
+        phone,
+        address
+      },
+      prescriptions: [],
+      test_reports: [],
+      medical_history: [],
+      iot_devices: [],
+      created_at: new Date(),
+      updated_at: new Date()
+    };
+
+    await ehrCollection.insertOne(ehrDoc);
+
+    req.log.info({ patientId: patient.id, abhaId }, 'Patient registered successfully');
+
+    res.status(201).json({
+      success: true,
+      patient: {
+        id: patient.id,
+        abhaId: patient.abha_id,
+        name,
+        createdAt: patient.created_at
+      },
+      ehrCreated: true
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Patient registration failed');
+    res.status(500).json({ error: 'Patient registration failed' });
+  }
+});
+
+// Search patient by ABHA ID (must come BEFORE /:id route)
+app.get('/patients/search', async (req, res) => {
+  const parsed = PatientSearchSchema.safeParse(req.query);
+
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { abha_id } = parsed.data;
+
+  try {
+    const { data: patient, error } = await supabase
+      .from('patients')
+      .select('id, abha_id, name_encrypted, gender, blood_group, created_at')
+      .eq('abha_id', abha_id)
+      .maybeSingle();
+
+    if (error) {
+      req.log.error({ err: error }, 'Patient search error');
+      return res.status(500).json({ error: 'Search failed' });
+    }
+
+    if (!patient) {
+      return res.json({
+        found: false,
+        message: 'No patient found with this ABHA ID'
+      });
+    }
+
+    res.json({
+      found: true,
+      patient: {
+        id: patient.id,
+        abhaId: patient.abha_id,
+        name: patient.name_encrypted,
+        gender: patient.gender,
+        bloodGroup: patient.blood_group,
+        createdAt: patient.created_at
+      }
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Patient search failed');
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+// Get patient basic information (parametric route comes AFTER specific routes)
+app.get('/patients/:id', async (req, res) => {
+  const patientId = req.params.id;
+
+  try {
+    const { data: patient, error } = await supabase
+      .from('patients')
+      .select('id, abha_id, name_encrypted, gender, blood_group, created_at')
+      .eq('id', patientId)
+      .single();
+
+    if (error || !patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    res.json({
+      id: patient.id,
+      abhaId: patient.abha_id,
+      name: patient.name_encrypted, // TODO: Decrypt in Phase 2
+      gender: patient.gender,
+      bloodGroup: patient.blood_group,
+      createdAt: patient.created_at
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Patient fetch failed');
+    res.status(500).json({ error: 'Failed to fetch patient' });
+  }
+});
+
+// Update patient profile (patient only)
+app.patch('/patients/:id/profile', async (req, res) => {
+  const patientId = req.params.id;
+  const parsed = PatientUpdateSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const updates = parsed.data;
+
+  // TODO: Add requirePatientAuth middleware to verify ownership
+  // For now, allow updates (will add auth in next iteration)
+
+  try {
+    // Update Postgres (only emergency contact is stored there)
+    if (updates.emergencyContact) {
+      const { error: pgError } = await supabase
+        .from('patients')
+        .update({ emergency_contact_encrypted: updates.emergencyContact })
+        .eq('id', patientId);
+
+      if (pgError) {
+        req.log.error({ err: pgError }, 'Patient update failed');
+        return res.status(500).json({ error: 'Update failed' });
+      }
+    }
+
+    // Update MongoDB EHR profile (phone and address stored here)
+    if (updates.phone || updates.address) {
+      const { getMongo } = await import('./lib/mongo');
+      const db = await getMongo();
+      const updateFields: any = { updated_at: new Date() };
+
+      if (updates.phone) updateFields['profile.phone'] = updates.phone;
+      if (updates.address) updateFields['profile.address'] = updates.address;
+
+      await db.collection('ehr_records').updateOne(
+        { patient_id: patientId },
+        { $set: updateFields }
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Profile updated',
+      updatedFields: Object.keys(updates)
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Patient update failed');
+    res.status(500).json({ error: 'Update failed' });
+  }
+});
+
+
+// ============================================================================
+// ADMISSIONS
+// ============================================================================
 
 // Admissions create
 app.post('/admissions', async (req, res) => {
@@ -195,24 +462,24 @@ app.post('/consent/grant', requireAuth, async (req, res) => {
   }
   const { patientId, recipientId, recipientHospitalId, scope, durationDays } = parsed.data;
   req.log.info({ patientId, recipientId, recipientHospitalId, scope, durationDays }, 'Consent grant validated');
-  
+
   // Verify patient is granting consent for themselves
   const authUser = (req as any).user;
   req.log.info({ authUserId: authUser?.id, patientId }, 'Checking patient ownership');
   if (!authUser || authUser.id !== patientId) {
     return res.status(403).json({ error: 'Can only grant consent for yourself' });
   }
-  
+
   try {
     const exp = Math.floor(Date.now() / 1000) + (durationDays * 86400);
     const jti = crypto.randomUUID();
-    const token = signConsent({ 
-      sub: patientId, 
+    const token = signConsent({
+      sub: patientId,
       aud: recipientId,
       hospital_id: recipientHospitalId,
-      scope, 
-      exp, 
-      jti 
+      scope,
+      exp,
+      jti
     });
     const record = {
       patientId,
@@ -224,14 +491,14 @@ app.post('/consent/grant', requireAuth, async (req, res) => {
       revoked: false,
     };
     await setConsent(jti, record, durationDays * 86400);
-    
+
     // Add to shared Redis indexes for patient and hospital
     await addToPatientIndex(patientId, jti);
     await addToHospitalIndex(recipientHospitalId, jti);
-    
-    res.status(201).json({ 
-      consentId: jti, 
-      consentToken: token, 
+
+    res.status(201).json({
+      consentId: jti,
+      consentToken: token,
       expiresAt: record.expiresAt,
       scope,
       durationDays
@@ -246,10 +513,10 @@ app.post('/consent/grant', requireAuth, async (req, res) => {
 app.post('/consent/revoke', requireAuth, async (req, res) => {
   const parsed = ConsentRevokeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  
+
   const { consentId } = parsed.data;
   const authUser = (req as any).user;
-  
+
   try {
     // Fetch consent record to validate ownership
     const { getConsent } = await import('./lib/redis');
@@ -257,12 +524,12 @@ app.post('/consent/revoke', requireAuth, async (req, res) => {
     if (!consent) {
       return res.status(404).json({ error: 'Consent not found' });
     }
-    
+
     // Only patient who granted consent can revoke it
     if (consent.patientId !== authUser.id) {
       return res.status(403).json({ error: 'Can only revoke your own consent' });
     }
-    
+
     const ok = await revokeConsent(consentId);
     res.json({ revoked: ok });
   } catch (e: any) {
@@ -274,20 +541,20 @@ app.post('/consent/revoke', requireAuth, async (req, res) => {
 // Consent status check (optional auth - works for both patient and hospital)
 app.get('/consent/status/:consentId', async (req, res) => {
   const { consentId } = req.params;
-  
+
   try {
     const { getConsent, isConsentRevoked } = await import('./lib/redis');
     const consent = await getConsent(consentId);
-    
+
     if (!consent) {
       return res.status(404).json({ error: 'Consent not found' });
     }
-    
+
     const revoked = await isConsentRevoked(consentId);
     const expiresAt = new Date(consent.expiresAt);
     const expired = expiresAt < new Date();
     const valid = !revoked && !expired;
-    
+
     res.json({
       consentId,
       valid,
@@ -310,28 +577,28 @@ app.get('/consent/status/:consentId', async (req, res) => {
 app.get('/consent/my', requireAuth, async (req, res) => {
   const authUser = (req as any).user;
   const patientId = authUser.id;
-  
+
   try {
     const { getPatientConsents, getConsent, isConsentRevoked } = await import('./lib/redis');
     const consentIds = await getPatientConsents(patientId);
-    
+
     const consents = await Promise.all(
       consentIds.map(async (jti) => {
         const consent = await getConsent(jti);
         if (!consent) return null;
-        
+
         const revoked = await isConsentRevoked(jti);
         const expiresAt = new Date(consent.expiresAt);
         const expired = expiresAt < new Date();
         const valid = !revoked && !expired;
-        
+
         // Fetch hospital name
         const { data: hospital } = await supabase
           .from('hospitals')
           .select('name')
           .eq('id', consent.recipientHospitalId)
           .single();
-        
+
         return {
           consentId: jti,
           recipientId: consent.recipientId,
@@ -346,7 +613,7 @@ app.get('/consent/my', requireAuth, async (req, res) => {
         };
       })
     );
-    
+
     res.json({ consents: consents.filter(c => c !== null) });
   } catch (e: any) {
     req.log.error({ err: e }, 'get patient consents failed');
@@ -357,31 +624,31 @@ app.get('/consent/my', requireAuth, async (req, res) => {
 // Get hospital's received consents (requires hospital admin auth)
 app.get('/consent/received', requireAuth, async (req, res) => {
   const authUser = (req as any).user;
-  
+
   // Verify user is hospital staff with hospital_id
   if (!authUser.hospitalId) {
     return res.status(403).json({ error: 'Hospital staff access required' });
   }
-  
+
   const hospitalId = authUser.hospitalId;
-  
+
   try {
     const { getHospitalConsents, getConsent, isConsentRevoked } = await import('./lib/redis');
     const consentIds = await getHospitalConsents(hospitalId);
-    
+
     const consents = await Promise.all(
       consentIds.map(async (jti) => {
         const consent = await getConsent(jti);
         if (!consent) return null;
-        
+
         const revoked = await isConsentRevoked(jti);
         const expiresAt = new Date(consent.expiresAt);
         const expired = expiresAt < new Date();
         const valid = !revoked && !expired;
-        
+
         // Only return active consents
         if (!valid) return null;
-        
+
         return {
           consentId: jti,
           patientId: consent.patientId,
@@ -392,7 +659,7 @@ app.get('/consent/received', requireAuth, async (req, res) => {
         };
       })
     );
-    
+
     res.json({ consents: consents.filter(c => c !== null) });
   } catch (e: any) {
     req.log.error({ err: e }, 'get hospital consents failed');
@@ -408,11 +675,11 @@ app.get('/ehr/patient/:id', requireConsent, async (req, res) => {
     const consentScopes = (req as any).consent?.scopes || [];
     const record = await getPatientEHR(patientId, consentScopes);
     if (!record) return res.status(404).json({ error: 'EHR record not found' });
-    res.json({ 
-      access: 'granted', 
-      patientId, 
+    res.json({
+      access: 'granted',
+      patientId,
       scopes: consentScopes,
-      ehr: record 
+      ehr: record
     });
   } catch (e: any) {
     req.log.error({ err: e }, 'EHR read failed');
@@ -424,7 +691,7 @@ app.get('/ehr/patient/:id', requireConsent, async (req, res) => {
 app.get('/ehr/patient/:id/prescriptions', requireConsent, async (req, res) => {
   const patientId = req.params.id;
   const consentScopes = (req as any).consent?.scopes || [];
-  
+
   if (!consentScopes.includes('prescriptions')) {
     return res.status(403).json({ error: 'Insufficient consent scope', required: 'prescriptions' });
   }
@@ -443,7 +710,7 @@ app.get('/ehr/patient/:id/prescriptions', requireConsent, async (req, res) => {
 app.get('/ehr/patient/:id/test-reports', requireConsent, async (req, res) => {
   const patientId = req.params.id;
   const consentScopes = (req as any).consent?.scopes || [];
-  
+
   if (!consentScopes.includes('test_reports')) {
     return res.status(403).json({ error: 'Insufficient consent scope', required: 'test_reports' });
   }
@@ -462,7 +729,7 @@ app.get('/ehr/patient/:id/test-reports', requireConsent, async (req, res) => {
 app.get('/ehr/patient/:id/medical-history', requireConsent, async (req, res) => {
   const patientId = req.params.id;
   const consentScopes = (req as any).consent?.scopes || [];
-  
+
   if (!consentScopes.includes('medical_history')) {
     return res.status(403).json({ error: 'Insufficient consent scope', required: 'medical_history' });
   }
@@ -482,7 +749,7 @@ app.get('/ehr/patient/:id/iot/:deviceType', requireConsent, async (req, res) => 
   const patientId = req.params.id;
   const deviceType = req.params.deviceType as any;
   const consentScopes = (req as any).consent?.scopes || [];
-  
+
   if (!consentScopes.includes('iot_devices')) {
     return res.status(403).json({ error: 'Insufficient consent scope', required: 'iot_devices' });
   }
@@ -501,7 +768,7 @@ app.get('/ehr/patient/:id/iot/:deviceType', requireConsent, async (req, res) => 
 app.post('/ehr/patient/:id/prescription', requireConsent, async (req, res) => {
   const patientId = req.params.id;
   const consentScopes = (req as any).consent?.scopes || [];
-  
+
   if (!consentScopes.includes('prescriptions')) {
     return res.status(403).json({ error: 'Insufficient consent scope', required: 'prescriptions' });
   }
@@ -514,7 +781,7 @@ app.post('/ehr/patient/:id/prescription', requireConsent, async (req, res) => {
     const userId = (req as any).user?.id || 'unknown';
     const prescription = { ...parsed.data, created_by: userId };
     const success = await addPrescription(patientId, prescription);
-    
+
     if (!success) {
       return res.status(404).json({ error: 'Patient EHR not found' });
     }
@@ -530,7 +797,7 @@ app.post('/ehr/patient/:id/prescription', requireConsent, async (req, res) => {
 app.post('/ehr/patient/:id/test-report', requireConsent, async (req, res) => {
   const patientId = req.params.id;
   const consentScopes = (req as any).consent?.scopes || [];
-  
+
   if (!consentScopes.includes('test_reports')) {
     return res.status(403).json({ error: 'Insufficient consent scope', required: 'test_reports' });
   }
@@ -543,7 +810,7 @@ app.post('/ehr/patient/:id/test-report', requireConsent, async (req, res) => {
     const userId = (req as any).user?.id || 'unknown';
     const report = { ...parsed.data, created_by: userId };
     const success = await addTestReport(patientId, report);
-    
+
     if (!success) {
       return res.status(404).json({ error: 'Patient EHR not found' });
     }
@@ -559,7 +826,7 @@ app.post('/ehr/patient/:id/test-report', requireConsent, async (req, res) => {
 app.post('/ehr/patient/:id/iot-log', requireConsent, async (req, res) => {
   const patientId = req.params.id;
   const consentScopes = (req as any).consent?.scopes || [];
-  
+
   if (!consentScopes.includes('iot_devices')) {
     return res.status(403).json({ error: 'Insufficient consent scope', required: 'iot_devices' });
   }
@@ -577,7 +844,7 @@ app.post('/ehr/patient/:id/iot-log', requireConsent, async (req, res) => {
       context
     };
     const success = await addIoTLog(patientId, device_type, device_id, log);
-    
+
     if (!success) {
       return res.status(404).json({ error: 'Patient EHR not found' });
     }
@@ -593,7 +860,7 @@ app.post('/ehr/patient/:id/iot-log', requireConsent, async (req, res) => {
 app.post('/ehr/patient/:id/medical-history', requireConsent, async (req, res) => {
   const patientId = req.params.id;
   const consentScopes = (req as any).consent?.scopes || [];
-  
+
   if (!consentScopes.includes('medical_history')) {
     return res.status(403).json({ error: 'Insufficient consent scope', required: 'medical_history' });
   }
@@ -604,7 +871,7 @@ app.post('/ehr/patient/:id/medical-history', requireConsent, async (req, res) =>
   try {
     const { addMedicalHistory } = await import('./lib/ehr');
     const success = await addMedicalHistory(patientId, parsed.data);
-    
+
     if (!success) {
       return res.status(404).json({ error: 'Patient EHR not found' });
     }
@@ -734,7 +1001,7 @@ app.get('/hospitals/:id/dashboard', async (req, res) => {
       .select('id, name, capacity_summary')
       .eq('id', hospitalId)
       .single();
-    
+
     if (hospError) throw hospError;
     if (!hospital) return res.status(404).json({ error: 'Hospital not found' });
 
@@ -743,7 +1010,7 @@ app.get('/hospitals/:id/dashboard', async (req, res) => {
       .from('beds')
       .select('type, status')
       .eq('hospital_id', hospitalId);
-    
+
     if (bedsError) throw bedsError;
 
     // Calculate bed stats
@@ -763,7 +1030,7 @@ app.get('/hospitals/:id/dashboard', async (req, res) => {
       .select('*', { count: 'exact', head: true })
       .eq('hospital_id', hospitalId)
       .is('discharged_at', null);
-    
+
     if (admError) throw admError;
 
     // Get doctor workload summary
@@ -772,7 +1039,7 @@ app.get('/hospitals/:id/dashboard', async (req, res) => {
       .select('specialization, current_patient_count, max_patients, is_on_duty')
       .eq('hospital_id', hospitalId)
       .eq('is_active', true);
-    
+
     if (docError) throw docError;
 
     const doctorStats = {

@@ -26,7 +26,7 @@ export async function requireAuth(
   next: NextFunction
 ): Promise<void> {
   const authHeader = req.headers.authorization;
-  
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Missing or invalid authorization header' });
     return;
@@ -37,7 +37,7 @@ export async function requireAuth(
   try {
     // Verify JWT with Supabase
     const { data, error } = await supabase.auth.getUser(token);
-    
+
     if (error || !data.user) {
       res.status(401).json({ error: 'Invalid or expired token' });
       return;
@@ -100,3 +100,38 @@ export function requireHospital(
   }
   next();
 }
+
+/**
+ * Middleware to require patient context
+ * Used for patient self-access endpoints (/ehr/my/*, /patients/:id/profile)
+ * Validates patient can only access their own records
+ */
+export async function requirePatientAuth(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  // First validate basic auth
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  // Verify user has patient_id claim
+  if (!req.user.patientId) {
+    res.status(403).json({ error: 'Patient access required' });
+    return;
+  }
+
+  // For routes with :id param, verify it matches patient_id
+  if (req.params.id && req.params.id !== req.user.patientId) {
+    res.status(403).json({ error: 'Cannot access other patient records' });
+    return;
+  }
+
+  // Attach patientId to request for convenience
+  (req as any).patientId = req.user.patientId;
+
+  next();
+}
+
