@@ -844,6 +844,62 @@ app.post('/consent/scan', requireAuth, async (req, res) => {
 });
 
 // ============================================================================
+// FILE UPLOAD SUPPORT (Task 5)
+// ============================================================================
+
+app.post('/upload/presigned-url', requireAuth, async (req, res) => {
+  const user = (req as AuthenticatedRequest).user;
+  const { fileName, fileType } = req.body;
+
+  if (!fileName || !fileType) {
+    return res.status(400).json({ error: 'fileName and fileType are required' });
+  }
+
+  // Basic validation
+  const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg', 'text/markdown'];
+  if (!allowedTypes.includes(fileType)) {
+    return res.status(400).json({ error: 'Invalid file type. Only PDF, Images, and Markdown allowed.' });
+  }
+
+  try {
+    // Create a unique path: private/{userId}/{timestamp}_{sanitizedName}
+    const timestamp = Date.now();
+    const sanitizedName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const filePath = `private/${user?.id}/${timestamp}_${sanitizedName}`;
+
+    // Use Service Role client to bypass RLS and generate presigned URLs reliably
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      req.log.error('SUPABASE_SERVICE_ROLE_KEY not found in environment');
+      return res.status(500).json({ error: 'Server configuration error: Missing service role key' });
+    }
+
+    const adminSupabase = createClient(
+      process.env.SUPABASE_URL!,
+      serviceRoleKey
+    );
+
+    // Generate Signed Upload URL
+    const { data, error } = await adminSupabase
+      .storage
+      .from('samrudhhi-storage')
+      .createSignedUploadUrl(filePath);
+
+    if (error) throw error;
+
+    res.json({
+      uploadUrl: data.signedUrl,
+      path: data.path, // Store this path in your DB (e.g., pdf_url field)
+      token: data.token
+    });
+
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Presigned URL generation failed');
+    res.status(500).json({ error: 'Failed to generate upload URL', details: e.message });
+  }
+});
+
+// ============================================================================
 // CONSENT REQUEST WORKFLOW (Doctor <-> Patient)
 // ============================================================================
 

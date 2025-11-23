@@ -27,6 +27,12 @@ const KNOWN_ROUTES = [
     { path: '/consent/:consentId/qr', method: 'GET', public: false },
     { path: '/consent/scan', method: 'POST', public: false },
 
+    // Consent Requests (TASK 4)
+    { path: '/consent/request', method: 'POST', public: false },
+    { path: '/consent/requests/my', method: 'GET', public: false },
+    { path: '/consent/requests/:id/approve', method: 'POST', public: false },
+    { path: '/consent/requests/:id/deny', method: 'POST', public: false },
+
     // Existing Consent Endpoints
     { path: '/consent/grant', method: 'POST', public: false },
     { path: '/consent/revoke', method: 'POST', public: false },
