@@ -290,6 +290,22 @@ app.post('/patients/register', requireAuth, async (req, res) => {
 
     await ehrCollection.insertOne(ehrDoc);
 
+    // Update Supabase Auth user metadata with patient_id
+    // This allows subsequent requests to access patient endpoints without re-auth
+    const { error: metadataError } = await supabase.auth.admin.updateUserById(
+      userId,
+      {
+        user_metadata: {
+          patient_id: patient.id,
+          role: 'patient'
+        }
+      }
+    );
+
+    if (metadataError) {
+      req.log.warn({ err: metadataError }, 'Failed to update user metadata (non-critical)');
+    }
+
     req.log.info({ patientId: patient.id, abhaId, email: userEmail }, 'Patient registered successfully');
 
     res.status(201).json({
@@ -301,7 +317,8 @@ app.post('/patients/register', requireAuth, async (req, res) => {
         name,
         createdAt: patient.created_at
       },
-      ehrCreated: true
+      ehrCreated: true,
+      message: 'Registration successful. Please refresh your token to access patient endpoints.'
     });
   } catch (e: any) {
     req.log.error({ err: e }, 'Patient registration failed');
