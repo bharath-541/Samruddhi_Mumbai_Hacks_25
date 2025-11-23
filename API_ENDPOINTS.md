@@ -262,6 +262,45 @@ curl -X POST http://localhost:3000/consent/revoke \
   -d '{"consentId":"..."}'
 ```
 
+```
+
+### Consent Requests (Workflow)
+
+#### `POST /consent/request`
+
+Doctor requests consent from patient.
+**Auth:** Doctor/Staff only
+**Body:**
+
+```json
+{
+  "patientId": "patient-uuid",
+  "scope": ["prescriptions", "test_reports"],
+  "purpose": "Follow-up consultation"
+}
+```
+
+#### `GET /consent/requests/my`
+
+Patient views their pending and past requests.
+**Auth:** Patient only
+
+#### `POST /consent/requests/:id/approve`
+
+Patient approves request.
+**Auth:** Patient only
+**Effects:**
+- Generates Consent Token
+- Stores in Redis
+- Updates request status to 'approved'
+**Returns:** `{ success: true, consentToken: "..." }`
+
+#### `POST /consent/requests/:id/deny`
+
+Patient denies request.
+**Auth:** Patient only
+**Effects:** Updates request status to 'rejected'
+
 ---
 
 ## 📋 Patient EHR Endpoints

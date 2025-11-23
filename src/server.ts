@@ -11,8 +11,9 @@ import { z } from 'zod';
 import { signConsent, verifyConsent } from './lib/jwt';
 import { setConsent, revokeConsent, isConsentValid, addToPatientIndex, addToHospitalIndex } from './lib/redis';
 import { requireConsent } from './middleware/consent';
-import { requireAuth } from './middleware/auth';
+import { requireAuth, requirePatientAuth, AuthenticatedRequest } from './middleware/auth';
 import QRCode from 'qrcode';
+import crypto from 'crypto';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const app = express();
@@ -135,6 +136,12 @@ const MedicalHistorySchema = z.object({
   hospital_name: z.string().optional()
 });
 
+const ConsentRequestSchema = z.object({
+  patientId: z.string().uuid(),
+  scope: z.array(z.enum(['profile', 'medical_history', 'prescriptions', 'test_reports', 'iot_devices'])).min(1),
+  purpose: z.string().min(5)
+});
+
 // Patient Registration & Profile Schemas
 const PatientRegistrationSchema = z.object({
   abhaId: z.string().regex(/^\d{4}-\d{4}-\d{4}$/, 'ABHA ID must be in format: 1234-5678-9012').optional(), // Optional - auto-generated if not provided
@@ -172,6 +179,7 @@ const PatientSearchSchema = z.object({
 
 // Health
 app.get('/health/live', (_req, res) => res.json({ status: 'ok' }));
+
 app.get('/health/ready', async (_req, res) => {
   try {
     const { error } = await supabase.from('hospitals').select('id').limit(1);
@@ -187,35 +195,21 @@ app.get('/health/ready', async (_req, res) => {
 // ============================================================================
 
 // Patient Registration (called after Supabase Auth signup)
-app.post('/patients/register', async (req, res) => {
+app.post('/patients/register', requireAuth, async (req, res) => {
+  // Auth check handled by middleware
+  const userId = (req as AuthenticatedRequest).user?.id;
+  const userEmail = (req as AuthenticatedRequest).user?.email;
+
+  if (!userId || !userEmail) {
+    return res.status(401).json({ error: 'Could not identify user from token' });
+  }
+
   const parsed = PatientRegistrationSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
 
   let { abhaId, name, dob, gender, bloodGroup, phone, emergencyContact, address } = parsed.data;
-
-  // Get user info from Supabase auth header (REQUIRED for email-based registration)
-  const authHeader = req.headers.authorization;
-  let userId: string | undefined;
-  let userEmail: string | undefined;
-
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.replace('Bearer ', '');
-    try {
-      const { data } = await supabase.auth.getUser(token);
-      userId = data.user?.id;
-      userEmail = data.user?.email;
-    } catch (e) {
-      return res.status(401).json({ error: 'Valid authentication required for registration' });
-    }
-  } else {
-    return res.status(401).json({ error: 'Authentication required for registration' });
-  }
-
-  if (!userId || !userEmail) {
-    return res.status(401).json({ error: 'Could not extract user information from token' });
-  }
 
   try {
     // Auto-generate ABHA-like ID if not provided
@@ -387,7 +381,7 @@ app.get('/patients/search', async (req, res) => {
 });
 
 // Get patient basic information (parametric route comes AFTER specific routes)
-app.get('/patients/:id', async (req, res) => {
+app.get('/patients/:id', requireAuth, async (req, res) => {
   const patientId = req.params.id;
 
   try {
@@ -416,7 +410,7 @@ app.get('/patients/:id', async (req, res) => {
 });
 
 // Update patient profile (patient only)
-app.patch('/patients/:id/profile', async (req, res) => {
+app.patch('/patients/:id/profile', requirePatientAuth, async (req, res) => {
   const patientId = req.params.id;
   const parsed = PatientUpdateSchema.safeParse(req.body);
 
@@ -848,6 +842,209 @@ app.post('/consent/scan', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'Invalid or expired consent token' });
   }
 });
+
+// ============================================================================
+// CONSENT REQUEST WORKFLOW (Doctor <-> Patient)
+// ============================================================================
+
+// Doctor: Request Consent
+app.post('/consent/request', requireAuth, async (req, res) => {
+  const user = (req as AuthenticatedRequest).user;
+
+  // 1. Verify user is a doctor/staff
+  // In real app, check role. For now, assume if they have hospitalId they are staff
+  if (!user?.hospitalId) {
+    return res.status(403).json({ error: 'Only hospital staff can request consent' });
+  }
+
+  const parsed = ConsentRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { patientId, scope, purpose } = parsed.data;
+
+  try {
+    // 2. Verify patient exists
+    const { data: patient } = await supabase
+      .from('patients')
+      .select('id')
+      .eq('id', patientId)
+      .single();
+
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    // 3. Create Request
+    // We need the doctor's ID (from users table or doctors table).
+    // Assuming user.id maps to a doctor record via users table or direct link.
+    // For MVP, we'll assume user.id IS the doctor_id (or we look it up).
+    // Let's look up the doctor record for this user
+    const { data: doctor } = await supabase
+      .from('doctors')
+      .select('id')
+      .eq('user_id', user.id)
+      .single();
+
+    if (!doctor) {
+      return res.status(403).json({ error: 'Doctor profile not found for this user' });
+    }
+
+    const { data: request, error } = await supabase
+      .from('consent_requests')
+      .insert({
+        patient_id: patientId,
+        doctor_id: doctor.id,
+        hospital_id: user.hospitalId,
+        scope,
+        purpose,
+        status: 'pending'
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.status(201).json({ request });
+
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Consent request failed');
+    res.status(500).json({ error: 'Failed to create consent request' });
+  }
+});
+
+// Patient: View Requests
+app.get('/consent/requests/my', requireAuth, async (req, res) => {
+  const user = (req as AuthenticatedRequest).user;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Only patients can view their requests' });
+  }
+
+  try {
+    const { data: requests, error } = await supabase
+      .from('consent_requests')
+      .select(`
+        *,
+        doctor:doctors(name, specialization),
+        hospital:hospitals(name)
+      `)
+      .eq('patient_id', user.patientId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    res.json({ requests });
+
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Fetch consent requests failed');
+    res.status(500).json({ error: 'Failed to fetch requests' });
+  }
+});
+
+// Patient: Approve Request
+app.post('/consent/requests/:id/approve', requireAuth, async (req, res) => {
+  const user = (req as AuthenticatedRequest).user;
+  const requestId = req.params.id;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Only patients can approve requests' });
+  }
+
+  try {
+    // 1. Get Request
+    const { data: request, error: fetchError } = await supabase
+      .from('consent_requests')
+      .select('*')
+      .eq('id', requestId)
+      .eq('patient_id', user.patientId)
+      .single();
+
+    if (fetchError || !request) {
+      return res.status(404).json({ error: 'Request not found' });
+    }
+
+    if (request.status !== 'pending') {
+      return res.status(400).json({ error: `Request is already ${request.status}` });
+    }
+
+    // 2. Generate Consent Token
+    const durationDays = 14; // Default to 14 days for approved requests
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + durationDays);
+
+    const token = signConsent({
+      sub: user.patientId,
+      aud: request.doctor_id, // Recipient is the doctor
+      hospital_id: request.hospital_id,
+      scope: request.scope,
+      exp: Math.floor(expiresAt.getTime() / 1000),
+      jti: crypto.randomUUID()
+    });
+
+    const decoded = verifyConsent(token);
+
+    // 3. Store in Redis
+    await setConsent(decoded.jti, {
+      patientId: user.patientId,
+      recipientId: request.doctor_id,
+      recipientHospitalId: request.hospital_id,
+      scope: request.scope,
+      grantedAt: new Date().toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      revoked: false
+    }, durationDays * 24 * 60 * 60);
+
+    // 4. Update Request Status
+    const { error: updateError } = await supabase
+      .from('consent_requests')
+      .update({ status: 'approved', updated_at: new Date() })
+      .eq('id', requestId);
+
+    if (updateError) throw updateError;
+
+    res.json({
+      success: true,
+      consentToken: token,
+      consentId: decoded.jti,
+      expiresAt
+    });
+
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Consent approval failed');
+    res.status(500).json({ error: 'Failed to approve request' });
+  }
+});
+
+// Patient: Deny Request
+app.post('/consent/requests/:id/deny', requireAuth, async (req, res) => {
+  const user = (req as AuthenticatedRequest).user;
+  const requestId = req.params.id;
+
+  if (!user?.patientId) {
+    return res.status(403).json({ error: 'Only patients can deny requests' });
+  }
+
+  try {
+    const { error } = await supabase
+      .from('consent_requests')
+      .update({ status: 'rejected', updated_at: new Date() })
+      .eq('id', requestId)
+      .eq('patient_id', user.patientId)
+      .eq('status', 'pending'); // Can only deny pending requests
+
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Request denied' });
+
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Consent denial failed');
+    res.status(500).json({ error: 'Failed to deny request' });
+  }
+});
+
+
 
 // ============================================================================
 // PATIENT SELF-SERVICE EHR (No Consent Required)
@@ -1579,4 +1776,4 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 const port = process.env.PORT || 3000;
 app.listen(port, () => logger.info({ port }, 'Server listening'));
 
-import crypto from 'node:crypto';
+

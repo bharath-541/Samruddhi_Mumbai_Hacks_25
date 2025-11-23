@@ -14,8 +14,8 @@
 |---|------|----------|--------|--------|--------------|
 | 1 | [Patient Registration](./TASK-01-PATIENT-REGISTRATION.md) | 🔴 CRITICAL | 4h | 📋 Planned | None |
 | 2 | [Patient Self-Service EHR](./TASK-02-PATIENT-SELF-SERVICE.md) | 🔴 CRITICAL | 3h | 📋 Planned | TASK 1 |
-| 3 | [QR Code Generation](./TASK-03-QR-CODE-GENERATION.md) | 🔴 CRITICAL | 2h | 📋 Planned | None |
-| 4 | Consent Request Workflow | 🟡 HIGH | 6h | 🔄 In Progress | TASK 1, 3 |
+| 3 | [QR Code Generation](./TASK-03-QR-CODE-GENERATION.md) | 🔴 CRITICAL | 2h | ✅ Completed | None |
+| 4 | [Consent Request Workflow](./TASK-04-CONSENT-REQUEST.md) | 🟡 HIGH | 6h | ✅ Completed | TASK 1, 3 |
 | 5 | File Upload Support | 🟡 HIGH | 5h | 📋 Planned | TASK 2 |
 | 6 | Audit Trail Visibility | 🟡 HIGH | 3h | 📋 Planned | None |
 
