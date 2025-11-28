@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { signConsent, verifyConsent } from './lib/jwt';
 import { setConsent, revokeConsent, isConsentValid, addToPatientIndex, addToHospitalIndex } from './lib/redis';
 import { requireConsent } from './middleware/consent';
-import { requireAuth, requirePatientAuth, AuthenticatedRequest } from './middleware/auth';
+import { requireAuth, requirePatientAuth, requireHospitalStaff, AuthenticatedRequest } from './middleware/auth';
 import QRCode from 'qrcode';
 import crypto from 'crypto';
 
@@ -96,8 +96,8 @@ const PrescriptionSchema = z.object({
   medications: z.array(z.object({
     name: z.string().min(1),
     dosage: z.string().min(1),
-    frequency: z.string().min(1),
-    duration: z.string().min(1),
+    frequency: z.string().optional(),  // More flexible
+    duration: z.string().optional(),    // Optional for chronic medications
     notes: z.string().optional()
   })).min(1),
   diagnosis: z.string().optional(),
@@ -138,6 +138,7 @@ const MedicalHistorySchema = z.object({
 
 const ConsentRequestSchema = z.object({
   patientId: z.string().uuid(),
+  recipientId: z.string().min(1),  // Relaxed - any string ID
   scope: z.array(z.enum(['profile', 'medical_history', 'prescriptions', 'test_reports', 'iot_devices'])).min(1),
   purpose: z.string().min(5)
 });
@@ -312,7 +313,7 @@ app.post('/patients/register', requireAuth, async (req, res) => {
       success: true,
       patient: {
         id: patient.id,
-        abhaId: patient.abha_id,
+        abha_id: abhaId,  // Fixed: return generated/provided ABHA ID
         email: userEmail,
         name,
         createdAt: patient.created_at
@@ -1428,6 +1429,124 @@ app.post('/ehr/my/iot-log', requireAuth, async (req, res) => {
   } catch (e: any) {
     req.log.error({ err: e }, 'Failed to add IoT log');
     res.status(500).json({ error: 'Failed to add IoT log' });
+  }
+});
+
+// ============================================================================
+// DOCTOR ENDPOINTS (Doctor assigns data directly to patients)
+// ============================================================================
+
+// Doctor adds prescription to patient record
+app.post('/ehr/patient/:id/prescription', requireAuth, requireHospitalStaff, async (req, res) => {
+  const user = (req as any).user;
+  const patientId = req.params.id;
+
+  const parsed = PrescriptionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    // Verify patient exists
+    const { data: patient, error: patientError } = await supabase
+      .from('patients')
+      .select('id')
+      .eq('id', patientId)
+      .single();
+
+    if (patientError || !patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+
+    // Add prescription with source tracking
+    const prescriptionData = {
+      ...parsed.data,
+      source: {
+        type: 'doctor_assigned',
+        created_by: user.id,
+        created_at: new Date()
+      },
+      created_at: new Date()
+    };
+
+    await db.collection('ehr_records').updateOne(
+      { patient_id: patientId },
+      {
+        $push: { prescriptions: prescriptionData } as any,
+        $set: { updated_at: new Date() }
+      },
+      { upsert: true }  // Create EHR record if doesn't exist
+    );
+
+    req.log.info({ doctorId: user.id, patientId }, 'Doctor added prescription');
+    res.status(201).json({
+      success: true,
+      message: 'Prescription added to patient record',
+      prescription: prescriptionData
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Failed to add prescription');
+    res.status(500).json({ error: 'Failed to add prescription' });
+  }
+});
+
+// Doctor adds test report to patient record
+app.post('/ehr/patient/:id/test-report', requireAuth, requireHospitalStaff, async (req, res) => {
+  const user = (req as any).user;
+  const patientId = req.params.id;
+
+  const parsed = TestReportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    // Verify patient exists
+    const { data: patient, error: patientError } = await supabase
+      .from('patients')
+      .select('id')
+      .eq('id', patientId)
+      .single();
+
+    if (patientError || !patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+
+    // Add test report with source tracking
+    const testReportData = {
+      ...parsed.data,
+      source: {
+        type: 'doctor_assigned',
+        created_by: user.id,
+        created_at: new Date()
+      },
+      created_at: new Date()
+    };
+
+    await db.collection('ehr_records').updateOne(
+      { patient_id: patientId },
+      {
+        $push: { test_reports: testReportData } as any,
+        $set: { updated_at: new Date() }
+      },
+      { upsert: true }  // Create EHR record if doesn't exist
+    );
+
+    req.log.info({ doctorId: user.id, patientId }, 'Doctor added test report');
+    res.status(201).json({
+      success: true,
+      message: 'Test report added to patient record',
+      test_report: testReportData
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Failed to add test report');
+    res.status(500).json({ error: 'Failed to add test report' });
   }
 });
 

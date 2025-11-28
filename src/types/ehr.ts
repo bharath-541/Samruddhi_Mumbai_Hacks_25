@@ -38,8 +38,8 @@ export interface Prescription {
   medications: Array<{
     name: string;
     dosage: string;
-    frequency: string;
-    duration: string;
+    frequency?: string;  // Optional for flexibility
+    duration?: string;    // Optional for chronic medications
     notes?: string;
   }>;
   diagnosis?: string;
@@ -48,6 +48,12 @@ export interface Prescription {
     medicines: string[];
     dosage: string[];
     duration: string[];
+  };
+  source?: {  // Track origin of prescription
+    type: 'manual' | 'doctor_assigned' | 'ocr_parsed';
+    created_by?: string; // user_id or doctor_id
+    ocr_confidence?: number;
+    parsed_at?: string;
   };
   created_by?: string; // user_id
   created_at?: string;
@@ -97,7 +103,7 @@ export interface PatientEHR {
 /**
  * Consent scopes - what data hospital can access
  */
-export type ConsentScope = 
+export type ConsentScope =
   | 'profile'
   | 'medical_history'
   | 'prescriptions'

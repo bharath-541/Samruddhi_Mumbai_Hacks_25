@@ -102,6 +102,23 @@ export function requireHospital(
 }
 
 /**
+ * Middleware to require hospital staff context
+ * For doctors/staff who can assign data to patients
+ */
+export function requireHospitalStaff(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void {
+  if (!req.user?.hospitalId) {
+    res.status(403).json({ error: 'Hospital staff access required' });
+    return;
+  }
+  // Additional role check could be added here (e.g., user.role === 'doctor' || 'nurse')
+  next();
+}
+
+/**
  * Middleware to require patient context
  * Used for patient self-access endpoints (/ehr/my/*, /patients/:id/profile)
  * Validates patient can only access their own records
