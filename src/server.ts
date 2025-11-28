@@ -2185,6 +2185,403 @@ app.post('/ml/predict/:hospitalId', requireAuth, async (req, res) => {
   }
 });
 
+// ============================================================================
+// BED MANAGEMENT ENDPOINTS (Hospital Staff)
+// ============================================================================
+
+// Create new bed
+app.post('/beds', requireAuth, async (req, res) => {
+  const authUser = (req as any).user;
+  
+  const BedCreateSchema = z.object({
+    hospital_id: z.string().uuid(),
+    bed_number: z.string().min(1),
+    type: z.enum(['general', 'icu', 'nicu', 'picu', 'emergency', 'isolation']),
+    floor: z.number().int().optional(),
+    ward: z.string().optional(),
+    status: z.enum(['available', 'occupied', 'maintenance', 'reserved']).default('available')
+  });
+
+  const parsed = BedCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { hospital_id, bed_number, type, floor, ward, status } = parsed.data;
+
+  try {
+    // Check if bed number already exists for this hospital
+    const { data: existing } = await supabase
+      .from('beds')
+      .select('id')
+      .eq('hospital_id', hospital_id)
+      .eq('bed_number', bed_number)
+      .maybeSingle();
+
+    if (existing) {
+      return res.status(409).json({ error: 'Bed number already exists for this hospital' });
+    }
+
+    // Create bed
+    const { data: bed, error } = await supabase
+      .from('beds')
+      .insert({
+        hospital_id,
+        bed_number,
+        type,
+        floor,
+        ward,
+        status
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    req.log.info({ bedId: bed.id, hospital_id, bed_number }, 'Bed created');
+    res.status(201).json({
+      success: true,
+      bed
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Bed creation failed');
+    res.status(500).json({ error: 'Bed creation failed' });
+  }
+});
+
+// Update bed status
+app.patch('/beds/:id', requireAuth, async (req, res) => {
+  const bedId = req.params.id;
+  
+  const BedUpdateSchema = z.object({
+    status: z.enum(['available', 'occupied', 'maintenance', 'reserved']).optional(),
+    floor: z.number().int().optional(),
+    ward: z.string().optional()
+  });
+
+  const parsed = BedUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const { data: bed, error } = await supabase
+      .from('beds')
+      .update(parsed.data)
+      .eq('id', bedId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!bed) return res.status(404).json({ error: 'Bed not found' });
+
+    req.log.info({ bedId, updates: parsed.data }, 'Bed updated');
+    res.json({
+      success: true,
+      bed
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Bed update failed');
+    res.status(500).json({ error: 'Bed update failed' });
+  }
+});
+
+// Delete bed
+app.delete('/beds/:id', requireAuth, async (req, res) => {
+  const bedId = req.params.id;
+
+  try {
+    // Check if bed is occupied
+    const { data: bed } = await supabase
+      .from('beds')
+      .select('status')
+      .eq('id', bedId)
+      .single();
+
+    if (!bed) return res.status(404).json({ error: 'Bed not found' });
+    
+    if (bed.status === 'occupied') {
+      return res.status(400).json({ error: 'Cannot delete occupied bed' });
+    }
+
+    const { error } = await supabase
+      .from('beds')
+      .delete()
+      .eq('id', bedId);
+
+    if (error) throw error;
+
+    req.log.info({ bedId }, 'Bed deleted');
+    res.json({
+      success: true,
+      message: 'Bed deleted successfully'
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Bed deletion failed');
+    res.status(500).json({ error: 'Bed deletion failed' });
+  }
+});
+
+// ============================================================================
+// DOCTOR MANAGEMENT ENDPOINTS (Hospital Admin)
+// ============================================================================
+
+// Create doctor profile
+app.post('/doctors', requireAuth, async (req, res) => {
+  const authUser = (req as any).user;
+  
+  const DoctorCreateSchema = z.object({
+    user_id: z.string().uuid(), // Supabase auth user ID
+    hospital_id: z.string().uuid(),
+    name: z.string().min(2),
+    specialization: z.string().min(2),
+    qualification: z.string().optional(),
+    department_id: z.string().uuid().optional(),
+    contact_number: z.string().optional(),
+    email: z.string().email().optional(),
+    is_on_duty: z.boolean().default(true)
+  });
+
+  const parsed = DoctorCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { user_id, hospital_id, name, specialization, qualification, department_id, contact_number, email, is_on_duty } = parsed.data;
+
+  try {
+    // Check if doctor profile already exists
+    const { data: existing } = await supabase
+      .from('doctors')
+      .select('id')
+      .eq('user_id', user_id)
+      .maybeSingle();
+
+    if (existing) {
+      return res.status(409).json({ error: 'Doctor profile already exists for this user' });
+    }
+
+    // Create doctor profile
+    const { data: doctor, error } = await supabase
+      .from('doctors')
+      .insert({
+        user_id,
+        hospital_id,
+        name,
+        specialization,
+        qualification,
+        department_id,
+        contact_number,
+        email,
+        is_on_duty,
+        is_active: true
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    req.log.info({ doctorId: doctor.id, user_id, hospital_id }, 'Doctor profile created');
+    res.status(201).json({
+      success: true,
+      doctor
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Doctor profile creation failed');
+    res.status(500).json({ error: 'Doctor profile creation failed' });
+  }
+});
+
+// Update doctor profile
+app.patch('/doctors/:id', requireAuth, async (req, res) => {
+  const doctorId = req.params.id;
+  
+  const DoctorUpdateSchema = z.object({
+    specialization: z.string().optional(),
+    qualification: z.string().optional(),
+    is_on_duty: z.boolean().optional(),
+    is_active: z.boolean().optional(),
+    contact_number: z.string().optional()
+  });
+
+  const parsed = DoctorUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const { data: doctor, error } = await supabase
+      .from('doctors')
+      .update(parsed.data)
+      .eq('id', doctorId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!doctor) return res.status(404).json({ error: 'Doctor not found' });
+
+    req.log.info({ doctorId, updates: parsed.data }, 'Doctor profile updated');
+    res.json({
+      success: true,
+      doctor
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Doctor profile update failed');
+    res.status(500).json({ error: 'Doctor profile update failed' });
+  }
+});
+
+// ============================================================================
+// ADMISSION MANAGEMENT ENDPOINTS (Hospital Staff)
+// ============================================================================
+
+// Create admission
+app.post('/admissions', requireAuth, async (req, res) => {
+  const authUser = (req as any).user;
+  
+  const AdmissionCreateSchema = z.object({
+    patient_id: z.string().uuid(),
+    hospital_id: z.string().uuid(),
+    bed_id: z.string().uuid(),
+    primary_doctor_id: z.string().uuid(),
+    diagnosis: z.string().optional(),
+    admission_type: z.enum(['emergency', 'planned', 'transfer']).default('planned'),
+    department_id: z.string().uuid().optional()
+  });
+
+  const parsed = AdmissionCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { patient_id, hospital_id, bed_id, primary_doctor_id, diagnosis, admission_type, department_id } = parsed.data;
+
+  try {
+    // Check if bed is available
+    const { data: bed } = await supabase
+      .from('beds')
+      .select('status, bed_number')
+      .eq('id', bed_id)
+      .single();
+
+    if (!bed) {
+      return res.status(404).json({ error: 'Bed not found' });
+    }
+
+    if (bed.status !== 'available') {
+      return res.status(400).json({ error: `Bed ${bed.bed_number} is not available (status: ${bed.status})` });
+    }
+
+    // Create admission
+    const { data: admission, error: admitError } = await supabase
+      .from('admissions')
+      .insert({
+        patient_id,
+        hospital_id,
+        bed_id,
+        primary_doctor_id,
+        diagnosis,
+        admission_type,
+        department_id,
+        admitted_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (admitError) throw admitError;
+
+    // Update bed status to occupied
+    const { error: bedError } = await supabase
+      .from('beds')
+      .update({ status: 'occupied' })
+      .eq('id', bed_id);
+
+    if (bedError) {
+      req.log.error({ err: bedError }, 'Failed to update bed status');
+    }
+
+    req.log.info({ admissionId: admission.id, patient_id, bed_id }, 'Admission created');
+    res.status(201).json({
+      success: true,
+      admission
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Admission creation failed');
+    res.status(500).json({ error: 'Admission creation failed' });
+  }
+});
+
+// Discharge patient
+app.patch('/admissions/:id/discharge', requireAuth, async (req, res) => {
+  const admissionId = req.params.id;
+  
+  const DischargeSchema = z.object({
+    discharge_summary: z.string().optional(),
+    follow_up_instructions: z.string().optional(),
+    follow_up_date: z.string().optional()
+  });
+
+  const parsed = DischargeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { discharge_summary, follow_up_instructions, follow_up_date } = parsed.data;
+
+  try {
+    // Get admission details
+    const { data: admission } = await supabase
+      .from('admissions')
+      .select('bed_id, discharged_at')
+      .eq('id', admissionId)
+      .single();
+
+    if (!admission) {
+      return res.status(404).json({ error: 'Admission not found' });
+    }
+
+    if (admission.discharged_at) {
+      return res.status(400).json({ error: 'Patient already discharged' });
+    }
+
+    // Update admission with discharge info
+    const { data: updated, error: dischargeError } = await supabase
+      .from('admissions')
+      .update({
+        discharged_at: new Date().toISOString(),
+        discharge_summary,
+        follow_up_instructions,
+        follow_up_date
+      })
+      .eq('id', admissionId)
+      .select()
+      .single();
+
+    if (dischargeError) throw dischargeError;
+
+    // Free up the bed
+    if (admission.bed_id) {
+      const { error: bedError } = await supabase
+        .from('beds')
+        .update({ status: 'available' })
+        .eq('id', admission.bed_id);
+
+      if (bedError) {
+        req.log.error({ err: bedError }, 'Failed to update bed status after discharge');
+      }
+    }
+
+    req.log.info({ admissionId }, 'Patient discharged');
+    res.json({
+      success: true,
+      admission: updated
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Discharge failed');
+    res.status(500).json({ error: 'Discharge failed' });
+  }
+});
+
 // Global error handler fallback
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   logger.error({ err }, 'Unhandled error');
