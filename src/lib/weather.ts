@@ -61,16 +61,18 @@ export async function fetchWeatherData(
                     longitude: lng
                 }
             });
-            aqi = aqiResponse.data.indexes?.[0]?.aqi || aqi;
+            const aqiData = aqiResponse.data as any;
+            aqi = aqiData?.indexes?.[0]?.aqi || aqi;
         } catch (aqiError) {
             console.warn('AQI fetch failed, using default:', aqiError);
         }
 
+        const weatherData = weather as any;
         return {
-            temperature: weather.main.temp,
-            humidity: weather.main.humidity,
+            temperature: weatherData.main?.temp || 28.5,
+            humidity: weatherData.main?.humidity || 75,
             aqi: aqi,
-            rainfall: weather.rain?.['1h'] || 0, // Last 1 hour rainfall in mm
+            rainfall: weatherData.rain?.['1h'] || 0, // Last 1 hour rainfall in mm
             location: { city, lat, lng },
             timestamp: new Date()
         };
