@@ -7,6 +7,7 @@
 ## 🔧 Recent Changes (Nov 29, 2025)
 
 **Schema Migration Applied:** `20251129000001_fix_patients_text_columns.sql`
+
 - Fixed: Changed `patients` table columns from BYTEA to TEXT
 - Status: ✅ Works locally | ⚠️ Production server restart pending
 - Impact: Patient registration now working correctly

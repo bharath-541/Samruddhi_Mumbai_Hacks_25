@@ -16,11 +16,13 @@
 ## ⚠️ IMPORTANT NOTES
 
 ### Database Schema Fix (Nov 29, 2025)
+
 - **Migration Applied:** `20251129000001_fix_patients_text_columns.sql`
 - **Issue Fixed:** Changed `patients` table columns from BYTEA to TEXT (encryption not implemented yet)
 - **Status:** ✅ Works locally | ⚠️ Production needs Render restart
 
 ### Known Issues
+
 1. **Production Registration:** Fails with "Patient registration failed" - Server restart required on Render
 2. **Database Empty:** Both local and production databases need seeding - run `node scripts/seed_comprehensive.js`
 
@@ -145,6 +147,7 @@ curl 'https://samruddhi-backend.onrender.com/doctors?hospitalId=a1b2c3d4-1111-44
 ```
 
 **Required Fields:**
+
 - `email`: Valid email format
 - `password`: Minimum 8 characters
 - `name`: Non-empty string
@@ -152,6 +155,7 @@ curl 'https://samruddhi-backend.onrender.com/doctors?hospitalId=a1b2c3d4-1111-44
 - `gender`: "male", "female", "other", or "prefer_not_to_say"
 
 **Optional Fields:**
+
 - `abhaId`: If not provided, auto-generated as `AUTO-{timestamp}-{random}`
 - `bloodGroup`: Blood group string
 - `phone`: Phone number string
@@ -175,11 +179,13 @@ curl 'https://samruddhi-backend.onrender.com/doctors?hospitalId=a1b2c3d4-1111-44
 ```
 
 **Error Responses:**
+
 - `400`: Validation error
 - `409`: Email already registered
 - `500`: Registration failed (check MongoDB connection)
 
 **Test Command:**
+
 ```bash
 curl -X POST http://localhost:3000/auth/patient/signup \
   -H "Content-Type: application/json" \
