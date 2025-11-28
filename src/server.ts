@@ -1959,6 +1959,232 @@ app.get('/hospitals/:id/dashboard', async (req, res) => {
   }
 });
 
+// ============================================================================
+// ML MODEL DATA ENDPOINTS
+// ============================================================================
+
+// Get all model parameters for a hospital (verify ML model can access data)
+app.get('/ml/model-data/:hospitalId', requireAuth, async (req, res) => {
+  const hospitalId = req.params.hospitalId;
+
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+
+    // Fetch hospital data from MongoDB cache
+    const hospital = await db.collection('hospitals_cache').findOne({ id: hospitalId });
+
+    if (!hospital) {
+      return res.status(404).json({ error: 'Hospital not found' });
+    }
+
+    // Fetch current weather data
+    const today = new Date().toISOString().split('T')[0];
+    const weather = await db.collection('weather_data').findOne({
+      hospital_id: hospitalId,
+      date: today
+    });
+
+    if (!weather) {
+      return res.status(404).json({ error: 'Weather data not found. Run fetch_weather_data.js' });
+    }
+
+    // Calculate temporal features
+    const now = new Date();
+    const dayOfWeek = now.getDay();  // 0=Sunday, 6=Saturday
+    const month = now.getMonth() + 1;
+    const weekOfYear = Math.ceil((now.getDate() + new Date(now.getFullYear(), 0, 1).getDay()) / 7);
+
+    // Prepare model input data (all 26 features)
+    const modelData = {
+      // Temporal features
+      date: today,
+      day_of_week: dayOfWeek,
+      month: month,
+      week_of_year: weekOfYear,
+      is_weekend: dayOfWeek === 0 || dayOfWeek === 6,
+      season: weather.season,
+      festival_intensity: weather.festival_intensity || 0,
+      is_festival: weather.is_festival || false,
+
+      // Weather features
+      temperature: weather.temperature,
+      humidity: weather.humidity,
+      aqi: weather.aqi,
+      rainfall: weather.rainfall,
+
+      // Hospital features
+      total_beds: hospital.total_beds || 0,
+      icu_beds: hospital.icu_beds || 0,
+      doctors_count: hospital.doctors_count || 0,
+      nurses_count: hospital.nurses_count || 0,
+      hospital_type: hospital.hospital_type || 'Government',
+      current_bed_demand: hospital.current_bed_demand || 0,
+
+      // Lag features (would come from historical data)
+      lag_1_day: hospital.current_bed_demand || 0,
+      lag_7_day: hospital.current_bed_demand || 0,
+      lag_14_day: hospital.current_bed_demand || 0,
+
+      // Rolling averages (would be calculated from historical data)
+      rolling_avg_7: hospital.current_bed_demand || 0,
+      rolling_avg_14: hospital.current_bed_demand || 0,
+      rolling_std_7: 0
+    };
+
+    res.json({
+      success: true,
+      hospital: {
+        id: hospital.id,
+        name: hospital.name,
+        city: weather.city
+      },
+      model_data: modelData,
+      features_count: Object.keys(modelData).length,
+      ready_for_prediction: true,
+      message: 'All 26 model parameters available'
+    });
+
+  } catch (e: any) {
+    req.log.error({ err: e }, 'ML model data fetch failed');
+    res.status(500).json({ error: 'Failed to fetch model data' });
+  }
+});
+
+// Get model data for all hospitals
+app.get('/ml/model-data', requireAuth, async (req, res) => {
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+
+    const hospitals = await db.collection('hospitals_cache').find({ is_active: true }).toArray();
+    const today = new Date().toISOString().split('T')[0];
+
+    const results = [];
+
+    for (const hospital of hospitals) {
+      const weather = await db.collection('weather_data').findOne({
+        hospital_id: hospital.id,
+        date: today
+      });
+
+      if (weather) {
+        results.push({
+          hospital_id: hospital.id,
+          hospital_name: hospital.name,
+          has_weather_data: true,
+          total_beds: hospital.total_beds || 0,
+          current_demand: hospital.current_bed_demand || 0,
+          occupancy_rate: hospital.bed_occupancy_rate || 0,
+          temperature: weather.temperature,
+          aqi: weather.aqi
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      hospitals_count: results.length,
+      hospitals: results,
+      ready_for_batch_prediction: results.length > 0
+    });
+
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Batch model data fetch failed');
+    res.status(500).json({ error: 'Failed to fetch batch model data' });
+  }
+});
+
+// Predict bed demand for a specific hospital using ML model
+app.post('/ml/predict/:hospitalId', requireAuth, async (req, res) => {
+  const hospitalId = req.params.hospitalId;
+
+  try {
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+
+    // Fetch hospital data
+    const hospital = await db.collection('hospitals_cache').findOne({ id: hospitalId });
+    if (!hospital) {
+      return res.status(404).json({ error: 'Hospital not found' });
+    }
+
+    // Fetch weather data
+    const today = new Date().toISOString().split('T')[0];
+    const weather = await db.collection('weather_data').findOne({
+      hospital_id: hospitalId,
+      date: today
+    });
+
+    if (!weather) {
+      return res.status(404).json({ error: 'Weather data not available. Run fetch_weather_data.js' });
+    }
+
+    // Prepare model input
+    const now = new Date();
+    const modelInput = {
+      date: today,
+      day_of_week: now.getDay(),
+      month: now.getMonth() + 1,
+      week_of_year: Math.ceil((now.getDate() + new Date(now.getFullYear(), 0, 1).getDay()) / 7),
+      is_weekend: now.getDay() === 0 || now.getDay() === 6,
+      season: weather.season,
+      festival_intensity: weather.festival_intensity || 0,
+      is_festival: weather.is_festival || false,
+      temperature: weather.temperature,
+      humidity: weather.humidity,
+      aqi: weather.aqi,
+      rainfall: weather.rainfall,
+      total_beds: hospital.total_beds || 850,  // Default for demo
+      icu_beds: hospital.icu_beds || 120,
+      doctors_count: hospital.doctors_count || 180,
+      nurses_count: hospital.nurses_count || 360,
+      hospital_type: hospital.hospital_type || 'Government',
+      current_bed_demand: hospital.current_bed_demand || 0,
+      lag_1_day: hospital.current_bed_demand || 0,
+      lag_7_day: hospital.current_bed_demand || 0,
+      lag_14_day: hospital.current_bed_demand || 0,
+      rolling_avg_7: hospital.current_bed_demand || 0,
+      rolling_avg_14: hospital.current_bed_demand || 0,
+      rolling_std_7: 0
+    };
+
+    // Call ML model
+    const { predictBedDemand } = await import('./lib/ml-model');
+    const prediction = await predictBedDemand(modelInput);
+
+    res.json({
+      success: true,
+      hospital: {
+        id: hospital.id,
+        name: hospital.name,
+        city: weather.city,
+        total_beds: modelInput.total_beds,
+        current_demand: modelInput.current_bed_demand
+      },
+      prediction: {
+        predicted_bed_demand: prediction.predicted_bed_demand,
+        surge_expected: prediction.surge_expected,
+        surge_percentage: prediction.surge_percentage,
+        confidence: prediction.confidence,
+        prediction_date: prediction.prediction_date
+      },
+      alert_level: prediction.surge_expected ? (prediction.surge_percentage > 25 ? 'HIGH' : 'MEDIUM') : 'LOW',
+      recommendation: prediction.surge_expected
+        ? `Bed surge expected! Increase capacity by ${Math.ceil(prediction.surge_percentage)}%`
+        : 'Normal bed demand. No action needed.'
+    });
+
+  } catch (e: any) {
+    req.log.error({ err: e }, 'ML prediction failed');
+    res.status(500).json({
+      error: 'Prediction failed',
+      details: e.message,
+      note: 'Ensure Python 3, pandas, numpy, and scikit-learn are installed'
+    });
+  }
+});
+
 // Global error handler fallback
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   logger.error({ err }, 'Unhandled error');
