@@ -3,7 +3,7 @@
 ## 🌐 Base URLs
 
 - **Production:** `https://samruddhi-backend.onrender.com`
-- **Development:** `http://localhost:3000`
+- **Development (Local):** `http://localhost:3000`
 
 ## 📦 Database Architecture
 
@@ -13,49 +13,123 @@
 
 ---
 
-## ✅ VERIFIED WORKING ENDPOINTS (Production Tested - Nov 29, 2025)
+## ⚠️ IMPORTANT NOTES
+
+### Database Schema Fix (Nov 29, 2025)
+- **Migration Applied:** `20251129000001_fix_patients_text_columns.sql`
+- **Issue Fixed:** Changed `patients` table columns from BYTEA to TEXT (encryption not implemented yet)
+- **Status:** ✅ Works locally | ⚠️ Production needs Render restart
+
+### Known Issues
+1. **Production Registration:** Fails with "Patient registration failed" - Server restart required on Render
+2. **Database Empty:** Both local and production databases need seeding - run `node scripts/seed_comprehensive.js`
+
+---
+
+## ✅ VERIFIED WORKING ENDPOINTS (Local Testing - Nov 29, 2025)
 
 ### 🏥 Public Endpoints (No Auth Required)
 
 #### 1. Health Check
+
 ```bash
 GET /health/live
 # Response: {"status":"ok"}
 ```
 
 #### 2. Get All Hospitals
+
 ```bash
 GET /hospitals
 # Returns: Array of hospital objects
 ```
 
 #### 3. Get Hospital Capacity
+
 ```bash
 GET /hospitals/:id/capacity
 # Returns: Bed availability information
 ```
 
 #### 4. Get Hospital Dashboard
+
 ```bash
 GET /hospitals/:id/dashboard
 # Returns: Complete hospital dashboard with bed stats by type
 ```
 
+#### 5. Get Doctors by Hospital
+
+**Endpoint:** `GET /doctors?hospitalId={hospital-id}`
+
+**Description:** Returns all doctors for a specific hospital
+
+**Query Parameters:**
+
+- `hospitalId` (required): UUID of the hospital
+
+**Example:**
+
+```bash
+curl 'https://samruddhi-backend.onrender.com/doctors?hospitalId=a1b2c3d4-1111-4444-8888-111111111111'
+```
+
+**Response:**
+
+```json
+[
+  {
+    "id": "e1705c49-ac81-4ed2-aeac-fd982015e3aa",
+    "hospital_id": "a1b2c3d4-1111-4444-8888-111111111111",
+    "user_id": null,
+    "name": "Dr. Amit Patel",
+    "license_number": "MH-DOC-2018-1001",
+    "specialization": "Emergency Physician",
+    "qualification": ["MBBS", "MD"],
+    "department_id": null,
+    "contact_phone": "+919876543211",
+    "contact_email": "amit.patel@kem.edu",
+    "shift_pattern": "day",
+    "is_on_duty": true,
+    "max_patients": 16,
+    "current_patient_count": 9,
+    "is_active": true,
+    "hired_at": "2024-11-27T18:30:00.000Z",
+    "created_at": "2024-11-27T18:30:00.000Z",
+    "updated_at": "2024-11-27T18:30:00.000Z"
+  },
+  {
+    "id": "f2816d5a-bd92-5fe3-bf1b-ge093126f4bb",
+    "name": "Dr. Priya Sharma",
+    "specialization": "Neurologist",
+    "qualification": ["MBBS", "MD", "DM Neurology"],
+    "is_on_duty": false,
+    "current_patient_count": 7,
+    "max_patients": 12
+  }
+]
+```
+
+**Note:** `user_id` is `null` for seeded doctors (not linked to auth accounts yet)
+
 ---
 
 ## 🔐 Authentication Endpoints
 
-### ✅ Patient Registration (WORKING)
+### ✅ Patient Registration (WORKING LOCALLY - VERIFIED)
 
 **Endpoint:** `POST /auth/patient/signup`
 
 **Description:** Single-step patient registration - creates Supabase auth user + PostgreSQL patient record + MongoDB EHR document
 
+**Auth Required:** No
+
 **Body:**
+
 ```json
 {
   "email": "patient@example.com",
-  "password": "SecurePass123",  // Min 8 characters
+  "password": "SecurePass123",
   "name": "Rajesh Sharma",
   "dob": "1990-05-15",
   "gender": "male",
@@ -70,70 +144,101 @@ GET /hospitals/:id/dashboard
 }
 ```
 
-**Response:**
+**Required Fields:**
+- `email`: Valid email format
+- `password`: Minimum 8 characters
+- `name`: Non-empty string
+- `dob`: Date string (any format)
+- `gender`: "male", "female", "other", or "prefer_not_to_say"
+
+**Optional Fields:**
+- `abhaId`: If not provided, auto-generated as `AUTO-{timestamp}-{random}`
+- `bloodGroup`: Blood group string
+- `phone`: Phone number string
+- `emergencyContact`: Emergency contact string
+- `address`: Address object (street, city, state, pincode)
+
+**Response (201):**
+
 ```json
 {
   "message": "Patient registered successfully",
   "patient": {
-    "id": "dedb3e15-1789-48fe-a576-9660ef511484",
-    "abha_id": "AUTO-64881011-4622",
-    "name": "Test Patient",
-    "email": "test.1764364879@test.com"
+    "id": "a47ed7d8-80c4-4425-a766-aa4aa68c8a95",
+    "abha_id": "AUTO-66540448-9088",
+    "name": "New User",
+    "email": "newuser.1764366539@test.com"
   },
-  "user_id": "42f37547-9175-47f6-83f5-9da7df5e4288",
+  "user_id": "c5d7e713-774d-48ce-9f90-5675d3ee4ecc",
   "next_step": "Call supabase.auth.signInWithPassword() to get JWT token"
 }
 ```
 
-**⚠️ Important:** This endpoint creates the user but doesn't return a JWT token. You need to use Supabase client library to login:
+**Error Responses:**
+- `400`: Validation error
+- `409`: Email already registered
+- `500`: Registration failed (check MongoDB connection)
 
-```javascript
-const { data, error } = await supabase.auth.signInWithPassword({
-  email: 'patient@example.com',
-  password: 'SecurePass123'
-});
-const token = data.session.access_token;
+**Test Command:**
+```bash
+curl -X POST http://localhost:3000/auth/patient/signup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test@example.com",
+    "password": "TestPass123",
+    "name": "Test User",
+    "dob": "1990-01-15",
+    "gender": "female"
+  }'
 ```
 
 ---
 
-### ✅ Patient Login (WORKING)
+### ✅ Patient Login (WORKING - VERIFIED Nov 29, 2025)
 
 **Endpoint:** `POST /auth/patient/login`
 
 **Description:** Authenticates patient and returns JWT token + patient data
 
 **Body:**
+
 ```json
 {
-  "email": "patient@example.com",
-  "password": "SecurePass123"
+  "email": "ramesh.patil@example.com",
+  "password": "Patient@123"
 }
 ```
 
+**Test Credentials (Seeded Data):**
+
+- Email: `ramesh.patil@example.com`
+- Password: `Patient@123`
+
 **Response:**
+
 ```json
 {
   "message": "Login successful",
   "user": {
-    "id": "uuid-here",
-    "email": "patient@example.com",
+    "id": "00cd59fc-58ce-4a79-9c7a-f0c0c818b306",
+    "email": "ramesh.patil@example.com",
     "role": "patient"
   },
-  "patient": {
-    "id": "patient-uuid",
-    "abha_id": "AUTO-12345678-9012",
-    "gender": "male",
-    "blood_group": "O+"
-  },
+  "patient": null,
   "session": {
-    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refresh_token": "...",
-    "expires_at": 1701234567
+    "access_token": "eyJhbGciOiJIUzI1NiIsImtpZCI6InZLR05UWGNZWHpmVUVJZzciLCJ0eXAiOiJKV1QifQ...",
+    "refresh_token": "xk72h2i4dhvc",
+    "expires_at": 1764369275
   },
   "note": "Store access_token and use as: Authorization: Bearer <access_token>"
 }
 ```
+
+**Important:**
+
+- ✅ Returns valid JWT token in `session.access_token`
+- ⚠️ `patient` field may be `null` if patient record is not yet in PostgreSQL (MongoDB EHR exists)
+- Use the JWT token for all protected endpoints: `Authorization: Bearer <access_token>`
 
 ---
 
@@ -144,18 +249,21 @@ All endpoints below require `Authorization: Bearer <token>` header
 ### ✅ Patient Self-Service Endpoints
 
 #### 1. Get Own EHR Profile
+
 ```bash
 GET /ehr/my
 Authorization: Bearer <token>
 ```
 
 #### 2. Get Own Prescriptions
+
 ```bash
 GET /ehr/my/prescriptions
 Authorization: Bearer <token>
 ```
 
 #### 3. Add Old Prescription
+
 ```bash
 POST /ehr/my/prescription
 Authorization: Bearer <token>
@@ -171,18 +279,21 @@ Content-Type: application/json
 ```
 
 #### 4. Get Medical History
+
 ```bash
 GET /ehr/my/medical-history
 Authorization: Bearer <token>
 ```
 
 #### 5. Get Test Reports
+
 ```bash
 GET /ehr/my/test-reports
 Authorization: Bearer <token>
 ```
 
 #### 6. Get IoT Device Data
+
 ```bash
 GET /ehr/my/iot/:deviceType
 Authorization: Bearer <token>
@@ -190,6 +301,7 @@ Authorization: Bearer <token>
 ```
 
 #### 7. Log IoT Data
+
 ```bash
 POST /ehr/my/iot-log
 Authorization: Bearer <token>
@@ -225,6 +337,7 @@ Content-Type: application/json
 ```
 
 **Response:**
+
 ```json
 {
   "consentId": "consent-uuid-jti",
@@ -438,6 +551,7 @@ curl -X POST https://samruddhi-backend.onrender.com/ehr/patient/patient-uuid/pre
 ## 🏥 Current Production Data
 
 **Hospitals:** 6 (5 Mumbai hospitals + 1 legacy)
+
 - King Edward Memorial (KEM) Hospital - Government, 1800 beds
 - Lokmanya Tilak Municipal General Hospital (Sion) - Government, 1400 beds
 - Lilavati Hospital & Research Centre - Private, 323 beds
@@ -446,6 +560,7 @@ curl -X POST https://samruddhi-backend.onrender.com/ehr/patient/patient-uuid/pre
 - Apollo Hospital Mumbai (Legacy) - Private
 
 **Database:**
+
 - 19 departments
 - 200 beds (seeded)
 - 9 doctors
@@ -467,6 +582,7 @@ node scripts/test_user_flows.js
 ✅ **8 out of 14 tests passing**
 
 **Passing:**
+
 - ✅ Patient Signup
 - ✅ Hospital List
 - ✅ Hospital Capacity
@@ -474,6 +590,7 @@ node scripts/test_user_flows.js
 - ✅ Public Endpoints
 
 **Requires JWT (Skipped in automated tests):**
+
 - ⚠️ Patient View Profile (endpoint exists, needs JWT)
 - ⚠️ Patient Add Prescription (endpoint exists, needs JWT)
 - ⚠️ Patient View Prescriptions (endpoint exists, needs JWT)
@@ -494,7 +611,7 @@ Patient Registration Flow:
          ├──► Create Supabase Auth User
          ├──► Create PostgreSQL Patient Record
          └──► Create MongoDB EHR Document
-         
+
 Authentication Flow:
 ┌─────────────────┐
 │  POST /auth/    │
@@ -542,10 +659,12 @@ Consent-Based Access Flow:
 **Health Check:** https://samruddhi-backend.onrender.com/health/live
 
 **Test Credentials (Seeded):**
+
 - Doctor: `rajesh.kumar@kem.edu` / `Doctor@123`
 - Patient: `ramesh.patil@patient.com` / `Patient@123`
 
 **Documentation Files:**
+
 - Complete API Reference: `API_ENDPOINTS.md`
 - User Flow Explanation: `USER_FLOW_EXPLAINED.md`
 - Consent Implementation: `CONSENT_IMPLEMENTATION.md`
@@ -553,6 +672,6 @@ Consent-Based Access Flow:
 
 ---
 
-*Last Updated: November 29, 2025*
-*Version: 2.0 - Verified Working Endpoints*
-*Test Status: 8/14 Passing (57%)*
+_Last Updated: November 29, 2025_
+_Version: 2.0 - Verified Working Endpoints_
+_Test Status: 8/14 Passing (57%)_
