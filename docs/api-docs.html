@@ -270,13 +270,20 @@
       <header>
         <h1>🏥 Samruddhi Backend API</h1>
         <p class="subtitle">Comprehensive Healthcare Management System</p>
-        <span class="status-badge">✅ Production Ready</span>
-        <span class="status-badge">v1.0.0</span>
+        <span class="status-badge">✅ Local Testing Complete</span>
+        <span class="status-badge">⚠️ Production Needs Restart</span>
+        <span class="status-badge">v2.0.0</span>
 
         <div class="base-url">
           <strong>Production URL:</strong>
           https://samruddhi-backend.onrender.com<br />
           <strong>Local Dev:</strong> http://localhost:3000
+        </div>
+        
+        <div class="info-box" style="margin-top: 15px;">
+          <strong>🔧 Schema Fix Applied (Nov 29, 2025):</strong><br />
+          Migration <code>20251129000001_fix_patients_text_columns.sql</code> applied to production database.<br />
+          ✅ Registration works locally | ⚠️ Production server needs restart to pick up changes.
         </div>
       </header>
 
@@ -305,17 +312,96 @@
               <strong>Header Format:</strong>
               <code>Authorization: Bearer &lt;JWT_TOKEN&gt;</code>
             </div>
+            
+            <div class="success-box">
+              <strong>✅ Patient Signup & Login - WORKING LOCALLY</strong><br />
+              Schema migration applied successfully. Registration now creates:<br />
+              • Supabase Auth user<br />
+              • PostgreSQL patient record<br />
+              • MongoDB EHR document<br />
+              <br />
+              <strong>⚠️ Production Status:</strong> Schema migration applied to DB, but server needs restart.
+            </div>
 
             <h3>User Roles</h3>
             <ul>
-              <li><strong>Patient:</strong> Regular users with ABHA IDs</li>
+              <li><strong>Patient:</strong> Regular users with ABHA IDs (auto-generated if not provided)</li>
               <li>
                 <strong>Staff:</strong> Hospital staff (doctors, nurses, admin)
               </li>
               <li><strong>Admin:</strong> System administrators</li>
             </ul>
 
-            <h3>Getting a JWT Token</h3>
+            <h3>Patient Registration (Single-Step)</h3>
+            <div class="endpoint">
+              <div>
+                <span class="method post">POST</span>
+                <span class="url">/auth/patient/signup</span>
+              </div>
+              <div class="description">Register new patient - creates complete account</div>
+              <pre><code>{
+  "email": "patient@example.com",
+  "password": "SecurePass123",  // Min 8 characters
+  "name": "Rajesh Sharma",
+  "dob": "1990-05-15",
+  "gender": "male",
+  "bloodGroup": "O+",  // Optional
+  "phone": "+919876543210",  // Optional
+  "address": {  // Optional
+    "street": "123 MG Road",
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "pincode": "400001"
+  }
+}</code></pre>
+              <strong>Response (201):</strong>
+              <pre><code>{
+  "message": "Patient registered successfully",
+  "patient": {
+    "id": "a47ed7d8-80c4-4425-a766-aa4aa68c8a95",
+    "abha_id": "AUTO-66540448-9088",
+    "name": "Rajesh Sharma",
+    "email": "patient@example.com"
+  },
+  "user_id": "c5d7e713-774d-48ce-9f90-5675d3ee4ecc",
+  "next_step": "Call supabase.auth.signInWithPassword() to get JWT token"
+}</code></pre>
+            </div>
+
+            <h3>Patient Login</h3>
+            <div class="endpoint">
+              <div>
+                <span class="method post">POST</span>
+                <span class="url">/auth/patient/login</span>
+              </div>
+              <div class="description">Login and get JWT token + patient data</div>
+              <pre><code>{
+  "email": "patient@example.com",
+  "password": "SecurePass123"
+}</code></pre>
+              <strong>Response:</strong>
+              <pre><code>{
+  "message": "Login successful",
+  "user": {
+    "id": "c5d7e713-774d-48ce-9f90-5675d3ee4ecc",
+    "email": "patient@example.com",
+    "role": "patient"
+  },
+  "patient": {
+    "id": "a47ed7d8-80c4-4425-a766-aa4aa68c8a95",
+    "abha_id": "AUTO-66540448-9088",
+    "gender": "male",
+    "blood_group": "O+"
+  },
+  "session": {
+    "access_token": "eyJhbGci...",
+    "refresh_token": "xk72h2i4dhvc",
+    "expires_at": 1764370151
+  }
+}</code></pre>
+            </div>
+
+            <h3>Getting a JWT Token (Alternative: Using Supabase Client)</h3>
             <pre><code>const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(
@@ -326,7 +412,7 @@ const supabase = createClient(
 // Authenticate
 const { data, error } = await supabase.auth.signInWithPassword({
   email: 'patient@example.com',
-  password: 'password123'
+  password: 'SecurePass123'
 });
 
 const token = data.session.access_token;</code></pre>
@@ -339,13 +425,11 @@ const token = data.session.access_token;</code></pre>
             <div class="endpoint">
               <div>
                 <span class="method get">GET</span>
-                <span class="url">/health</span>
+                <span class="url">/health/live</span>
               </div>
               <div class="description">Check API health status</div>
               <pre><code>{
-  "status": "healthy",
-  "timestamp": "2025-11-29T10:30:00Z",
-  "version": "1.0.0"
+  "status": "ok"
 }</code></pre>
             </div>
 
@@ -757,33 +841,68 @@ const token = data.session.access_token;</code></pre>
 
           <!-- TESTING -->
           <section id="testing" class="section">
-            <h2>🧪 Test Credentials</h2>
+            <h2>🧪 Test Credentials & Status</h2>
 
             <div class="credential-card">
-              <h4>👤 Patient Account</h4>
-              <p>Email: <code>test.patient@samruddhi.test</code></p>
-              <p>Password: <code>Password123!</code></p>
-              <p>ABHA ID: <code>1234-5678-9012</code></p>
+              <h4>👤 Patient Account (Seeded - Production)</h4>
+              <p>Email: <code>ramesh.patil@example.com</code></p>
+              <p>Password: <code>Patient@123</code></p>
+              <p>Status: ✅ Login works, registration pending restart</p>
             </div>
 
             <div class="credential-card">
-              <h4>👨‍⚕️ Doctor/Staff Account</h4>
-              <p>Email: <code>test.staff@samruddhi.test</code></p>
-              <p>Password: <code>Password123!</code></p>
+              <h4>👨‍⚕️ Doctor/Staff Account (Seeded - Production)</h4>
+              <p>Email: <code>rajesh.kumar@kem.edu</code></p>
+              <p>Password: <code>Doctor@123</code></p>
+              <p>Status: ✅ Working</p>
+            </div>
+            
+            <div class="credential-card">
+              <h4>🧪 Local Test Account (Created Nov 29, 2025)</h4>
+              <p>Email: <code>newuser.1764366539@test.com</code></p>
+              <p>Password: <code>TestPass123</code></p>
+              <p>ABHA ID: <code>AUTO-66540448-9088</code></p>
+              <p>Patient ID: <code>a47ed7d8-80c4-4425-a766-aa4aa68c8a95</code></p>
+              <p>Status: ✅ Full registration & login tested locally</p>
             </div>
 
             <div class="success-box">
-              <strong>📊 Current Test Results:</strong> 17/20 passing (85%)<br />
-              <strong>🔄 Deployment Status:</strong> Management endpoints
-              deploying<br />
-              <strong>🎯 Expected:</strong> 20/20 passing once deployment
-              completes
+              <strong>📊 Current Test Results:</strong> 8/14 passing (57%)<br />
+              <strong>✅ Working Locally:</strong> Registration, Login, Public Endpoints<br />
+              <strong>⚠️ Production:</strong> Schema migration applied, server restart needed<br />
+              <strong>⏳ Pending:</strong> Database seeding for both environments
             </div>
 
-            <h3>Run Tests</h3>
-            <pre><code>export SUPABASE_URL="https://bbgyfxgdyevciaggalmn.supabase.co"
-export SUPABASE_ANON_KEY="your-key"
-node scripts/test_auth_endpoints.js</code></pre>
+            <h3>Run Tests Locally</h3>
+            <pre><code># Start local server
+npm start
+
+# In another terminal, test registration
+curl -X POST http://localhost:3000/auth/patient/signup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test@example.com",
+    "password": "TestPass123",
+    "name": "Test User",
+    "dob": "1990-01-15",
+    "gender": "female"
+  }'
+
+# Test login
+curl -X POST http://localhost:3000/auth/patient/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test@example.com",
+    "password": "TestPass123"
+  }'
+</code></pre>
+
+            <h3>Database Seeding</h3>
+            <pre><code># Seed comprehensive data (hospitals, beds, doctors, patients)
+node scripts/seed_comprehensive.js
+
+# Or run complete test suite
+node scripts/test_user_flows.js</code></pre>
           </section>
 
           <!-- SUPPORT -->
@@ -801,22 +920,22 @@ node scripts/test_auth_endpoints.js</code></pre>
               <li>
                 <strong>Health Check:</strong>
                 <a
-                  href="https://samruddhi-backend.onrender.com/health"
+                  href="https://samruddhi-backend.onrender.com/health/live"
                   target="_blank"
-                  >https://samruddhi-backend.onrender.com/health</a
+                  >https://samruddhi-backend.onrender.com/health/live</a
                 >
               </li>
               <li>
                 <strong>Documentation:</strong>
-                <code>/docs/API_DOCUMENTATION.md</code>
+                <code>API_ENDPOINTS_CORRECTED.md</code> (verified endpoints)
               </li>
               <li>
                 <strong>Test Results:</strong>
-                <code>TEST_RESULTS_SUMMARY.md</code>
+                <code>CURRENT_STATUS_REPORT.md</code>
               </li>
               <li>
-                <strong>Seeding Guide:</strong>
-                <code>DATABASE_SEED_SUMMARY.md</code>
+                <strong>Schema Migration:</strong>
+                <code>supabase/migrations/20251129000001_fix_patients_text_columns.sql</code>
               </li>
             </ul>
           </section>

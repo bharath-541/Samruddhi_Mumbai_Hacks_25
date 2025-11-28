@@ -1,5 +1,16 @@
 # Samruddhi Backend API Documentation
 
+**Last Updated:** November 29, 2025  
+**Status:** ✅ Local Testing Complete | ⚠️ Production Needs Restart  
+**Version:** 2.0.0
+
+## 🔧 Recent Changes (Nov 29, 2025)
+
+**Schema Migration Applied:** `20251129000001_fix_patients_text_columns.sql`
+- Fixed: Changed `patients` table columns from BYTEA to TEXT
+- Status: ✅ Works locally | ⚠️ Production server restart pending
+- Impact: Patient registration now working correctly
+
 ## Base URL
 
 ```
@@ -68,18 +79,18 @@ const token = data.session.access_token;
 ### Health Check
 
 ```http
-GET /health
+GET /health/live
 ```
 
 **Response:**
 
 ```json
 {
-  "status": "healthy",
-  "timestamp": "2025-11-29T10:30:00.000Z",
-  "version": "1.0.0"
+  "status": "ok"
 }
 ```
+
+**Status:** ✅ Working (verified Nov 29, 2025)
 
 ### Readiness Check
 
