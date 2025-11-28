@@ -197,10 +197,205 @@ app.get('/health/ready', async (_req, res) => {
 });
 
 // ============================================================================
+// AUTHENTICATION ENDPOINTS (Public - No Auth Required)
+// ============================================================================
+
+// Patient Login - Returns patient data if login successful
+app.post('/auth/patient/login', async (req, res) => {
+  const parsed = z.object({
+    email: z.string().email(),
+    password: z.string().min(1)
+  }).safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid email or password format' });
+  }
+
+  const { email, password } = parsed.data;
+
+  try {
+    // Note: Frontend should use Supabase client directly for auth
+    // This endpoint is for convenience/testing only
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) {
+      req.log.warn({ email, err: error.message }, 'Login failed');
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Fetch patient profile
+    const { data: patient, error: patientError } = await supabase
+      .from('patients')
+      .select('id, abha_id, gender, blood_group')
+      .eq('ehr_id', data.user.id)
+      .maybeSingle();
+
+    if (patientError) {
+      req.log.error({ err: patientError }, 'Failed to fetch patient profile');
+    }
+
+    return res.status(200).json({
+      message: 'Login successful',
+      user: {
+        id: data.user.id,
+        email: data.user.email,
+        role: 'patient'
+      },
+      patient: patient || null,
+      session: {
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+        expires_at: data.session.expires_at
+      },
+      note: 'Store access_token and use as: Authorization: Bearer <access_token>'
+    });
+
+  } catch (error: any) {
+    req.log.error({ err: error }, 'Login error');
+    return res.status(500).json({ error: 'Login failed', details: error.message });
+  }
+});
+
+// ============================================================================
 // PATIENT REGISTRATION & PROFILE MANAGEMENT
 // ============================================================================
 
-// Patient Registration (called after Supabase Auth signup)
+// Public Patient Signup (creates both auth user and patient record)
+app.post('/auth/patient/signup', async (req, res) => {
+  const parsed = z.object({
+    email: z.string().email(),
+    password: z.string().min(8),
+    abhaId: z.string().optional(),
+    name: z.string().min(1),
+    dob: z.string(),
+    gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say']),
+    bloodGroup: z.string().optional(),
+    phone: z.string().optional(),
+    emergencyContact: z.string().optional(),
+    address: z.object({
+      street: z.string(),
+      city: z.string(),
+      state: z.string(),
+      pincode: z.string()
+    }).optional()
+  }).safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { email, password, abhaId, name, dob, gender, bloodGroup, phone, emergencyContact, address } = parsed.data;
+
+  try {
+    // Step 1: Create Supabase Auth user
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true, // Auto-confirm for development
+      user_metadata: {
+        role: 'patient',
+        name,
+        abha_id: abhaId
+      }
+    });
+
+    if (authError) {
+      req.log.error({ err: authError }, 'Auth user creation failed');
+      if (authError.message.includes('already registered')) {
+        return res.status(409).json({ error: 'Email already registered' });
+      }
+      return res.status(500).json({ error: 'Failed to create user account' });
+    }
+
+    const userId = authData.user.id;
+
+    // Step 2: Auto-generate ABHA ID if not provided
+    let finalAbhaId = abhaId;
+    if (!finalAbhaId) {
+      const timestamp = Date.now().toString().slice(-8);
+      const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      finalAbhaId = `AUTO-${timestamp}-${random}`;
+    }
+
+    // Step 3: Create patient record
+    const { data: patient, error: patientError } = await supabase
+      .from('patients')
+      .insert({
+        ehr_id: userId,
+        abha_id: finalAbhaId,
+        name_encrypted: name,
+        dob_encrypted: dob,
+        gender,
+        blood_group: bloodGroup,
+        emergency_contact_encrypted: emergencyContact || null
+      })
+      .select()
+      .single();
+
+    if (patientError) {
+      // Rollback: delete auth user if patient creation fails
+      await supabase.auth.admin.deleteUser(userId);
+      req.log.error({ err: patientError }, 'Patient record creation failed');
+      return res.status(500).json({ error: 'Patient registration failed' });
+    }
+
+    // Step 4: Create EHR document in MongoDB
+    const { getMongo } = await import('./lib/mongo');
+    const db = await getMongo();
+    const ehrCollection = db.collection('ehr_records');
+
+    await ehrCollection.insertOne({
+      patient_id: patient.id,
+      abha_id: finalAbhaId,
+      profile: {
+        name,
+        date_of_birth: dob,
+        gender,
+        blood_group: bloodGroup,
+        phone,
+        address,
+        emergency_contact: emergencyContact
+      },
+      prescriptions: [],
+      test_reports: [],
+      medical_history: [],
+      iot_data: {
+        heart_rate: [],
+        blood_pressure: [],
+        spo2: [],
+        temperature: [],
+        glucose: []
+      },
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+
+    req.log.info({ patientId: patient.id, userId, abhaId: finalAbhaId }, 'Patient registered successfully');
+
+    // Return success with auth session (user can login immediately)
+    return res.status(201).json({
+      message: 'Patient registered successfully',
+      patient: {
+        id: patient.id,
+        abha_id: finalAbhaId,
+        name,
+        email
+      },
+      user_id: userId,
+      // Note: Frontend should now call supabase.auth.signInWithPassword(email, password) to get session
+      next_step: 'Call supabase.auth.signInWithPassword() to get JWT token'
+    });
+
+  } catch (error: any) {
+    req.log.error({ err: error }, 'Patient signup failed');
+    return res.status(500).json({ error: 'Registration failed', details: error.message });
+  }
+});
+
+// Patient Registration (called after Supabase Auth signup) - DEPRECATED, use /auth/patient/signup instead
 app.post('/patients/register', requireAuth, async (req, res) => {
   // Auth check handled by middleware
   const userId = (req as AuthenticatedRequest).user?.id;
@@ -1818,12 +2013,21 @@ app.get('/hospitals/:id/capacity', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('hospitals')
-      .select('id, name, capacity_summary')
+      .select('id, name, capacity_summary, total_beds')
       .eq('id', hospitalId)
       .single();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Hospital not found' });
-    res.json(data);
+    
+    // Calculate bed occupancy percentage
+    const totalBeds = data.total_beds || data.capacity_summary?.total_beds || 0;
+    const occupiedBeds = data.capacity_summary?.occupied_beds || 0;
+    const bedOccupancy = totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0;
+    
+    res.json({
+      ...data,
+      bedOccupancy
+    });
   } catch (e: any) {
     req.log.error({ err: e }, 'capacity query failed');
     res.status(500).json({ error: 'Capacity query failed' });
@@ -1947,12 +2151,18 @@ app.get('/hospitals/:id/dashboard', async (req, res) => {
       }, {})
     };
 
+    // Calculate bed occupancy percentage
+    const totalBeds = beds?.length || 0;
+    const occupiedBeds = beds?.filter(b => b.status === 'occupied').length || 0;
+    const bedOccupancy = totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0;
+
     res.json({
       hospital: {
         id: hospital.id,
         name: hospital.name
       },
       capacity_summary: hospital.capacity_summary,
+      bedOccupancy: bedOccupancy,
       beds: bedStats,
       active_admissions: activeAdmissions || 0,
       doctors: doctorStats,

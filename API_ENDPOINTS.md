@@ -1,6 +1,117 @@
 # Samruddhi API Endpoints Documentation
 
-**Base URL:** `http://localhost:3000` (development)
+## 🌐 Base URLs
+
+- **Production:** `https://samruddhi-backend.onrender.com`
+- **Development:** `http://localhost:3000`
+
+## 📦 Database Architecture
+
+- **PostgreSQL (Supabase):** Hospital data, beds, doctors, admissions, patients metadata
+- **MongoDB:** Patient EHR (prescriptions, test reports, medical history, IoT data)
+- **Redis:** Consent tokens, session management
+
+---
+
+## 🔐 Authentication Endpoints (NEW - Public)
+
+### Patient Registration (Public - No Auth Required)
+
+#### `POST /auth/register`
+
+Single-step patient registration - creates Supabase auth user + patient record
+
+**Body:**
+
+```json
+{
+  "email": "patient@example.com",
+  "password": "SecurePass@123",
+  "role": "patient",
+  "patientData": {
+    "name": "John Doe",
+    "dateOfBirth": "1990-01-15",
+    "gender": "male",
+    "bloodGroup": "O+",
+    "phoneNumber": "+91-9876543210",
+    "address": "Mumbai, India"
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "token": "eyJhbGc...",
+  "user": {
+    "id": "uuid",
+    "email": "patient@example.com",
+    "role": "patient"
+  },
+  "patientId": "patient-uuid",
+  "message": "Patient registered successfully"
+}
+```
+
+```bash
+curl -X POST https://samruddhi-backend.onrender.com/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "patient@example.com",
+    "password": "SecurePass@123",
+    "role": "patient",
+    "patientData": {
+      "name": "John Doe",
+      "dateOfBirth": "1990-01-15",
+      "gender": "male",
+      "bloodGroup": "O+",
+      "phoneNumber": "+91-9876543210",
+      "address": "Mumbai, India"
+    }
+  }'
+```
+
+### Patient/Doctor Login (Public - No Auth Required)
+
+#### `POST /auth/login`
+
+Authenticate and get JWT token
+
+**Body:**
+
+```json
+{
+  "email": "user@example.com",
+  "password": "SecurePass@123"
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "token": "eyJhbGc...",
+  "user": {
+    "id": "uuid",
+    "email": "user@example.com",
+    "role": "patient"
+  },
+  "patientId": "patient-uuid",
+  "message": "Login successful"
+}
+```
+
+```bash
+curl -X POST https://samruddhi-backend.onrender.com/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "patient@example.com",
+    "password": "SecurePass@123"
+  }'
+```
 
 ---
 
@@ -43,28 +154,80 @@ curl "http://localhost:3000/beds?hospitalId=11111111-1111-1111-1111-111111111111
 
 ---
 
+### Hospital List
+
+#### `GET /hospitals`
+
+Get all hospitals (Public - No Auth Required)
+
+**Response:**
+
+```json
+[
+  {
+    "id": "uuid",
+    "name": "King Edward Memorial (KEM) Hospital",
+    "type": "government",
+    "tier": "tertiary",
+    "address": {...},
+    "contact_phone": "+91-22-24107000",
+    "total_beds": 1800,
+    "icu_beds": 200,
+    "occupied_beds": 1650,
+    "available_beds": 150
+  }
+]
+```
+
+```bash
+curl https://samruddhi-backend.onrender.com/hospitals
+```
+
 ### Hospital Capacity
 
 #### `GET /hospitals/:id/capacity`
 
-Get capacity summary for a specific hospital
+Get capacity summary with bed occupancy percentage
+
+**Response:**
+
+```json
+{
+  "hospital": {
+    "id": "uuid",
+    "name": "KEM Hospital"
+  },
+  "capacity": {
+    "total_beds": 1800,
+    "occupied_beds": 1650,
+    "available_beds": 150,
+    "icu_beds": 200,
+    "icu_available": 15,
+    "general_beds": 1600,
+    "general_available": 135,
+    "bedOccupancy": 92
+  },
+  "timestamp": "2025-11-29T10:30:00.000Z"
+}
+```
 
 ```bash
-curl http://localhost:3000/hospitals/11111111-1111-1111-1111-111111111111/capacity
+curl https://samruddhi-backend.onrender.com/hospitals/uuid/capacity
 ```
 
 #### `GET /hospitals/:id/dashboard`
 
-**Real-time hospital dashboard** with comprehensive stats
+**Real-time hospital dashboard** with comprehensive stats including bed occupancy percentage
+
 **Returns:**
 
 - Beds breakdown by type (total, available, occupied, maintenance)
 - Active admissions count
 - Doctor workload by specialization
-- Capacity summary
+- Capacity summary with occupancy percentage
 
 ```bash
-curl http://localhost:3000/hospitals/11111111-1111-1111-1111-111111111111/dashboard
+curl https://samruddhi-backend.onrender.com/hospitals/uuid/dashboard
 ```
 
 **Example Response:**
@@ -72,28 +235,68 @@ curl http://localhost:3000/hospitals/11111111-1111-1111-1111-111111111111/dashbo
 ```json
 {
   "hospital": {
-    "id": "11111111-1111-1111-1111-111111111111",
-    "name": "Apollo Hospital Mumbai"
+    "id": "uuid",
+    "name": "KEM Hospital Mumbai"
   },
-  "beds": {
-    "icu": { "total": 20, "available": 5, "occupied": 15, "maintenance": 0 },
+  "summary": {
+    "total_beds": 1800,
+    "occupied_beds": 1650,
+    "available_beds": 150,
+    "maintenance_beds": 0,
+    "bedOccupancy": 92
+  },
+  "beds_by_type": {
+    "icu": { "total": 200, "available": 15, "occupied": 185, "maintenance": 0 },
     "general": {
+      "total": 1400,
+      "available": 120,
+      "occupied": 1270,
+      "maintenance": 10
+    },
+    "emergency": {
+      "total": 150,
+      "available": 12,
+      "occupied": 138,
+      "maintenance": 0
+    },
+    "isolation": {
       "total": 50,
-      "available": 30,
-      "occupied": 18,
-      "maintenance": 2
+      "available": 3,
+      "occupied": 47,
+      "maintenance": 0
     }
   },
-  "active_admissions": 33,
+  "active_admissions": 1640,
   "doctors": {
-    "total": 10,
-    "on_duty": 7,
+    "total": 250,
+    "on_duty": 180,
     "by_specialization": {
-      "cardiology": { "count": 3, "current_load": 12, "max_capacity": 30 }
+      "Cardiologist": { "count": 35, "on_duty": 28, "current_load": 245 },
+      "Neurologist": { "count": 22, "on_duty": 18, "current_load": 156 }
     }
   },
-  "timestamp": "2025-11-17T10:30:00.000Z"
+  "timestamp": "2025-11-29T10:30:00.000Z"
 }
+```
+
+#### `GET /hospitals/:id/beds/available`
+
+Get list of available beds at a hospital
+
+```bash
+curl https://samruddhi-backend.onrender.com/hospitals/uuid/beds/available
+```
+
+#### `GET /hospitals/:id/doctors`
+
+Get list of doctors at a hospital
+
+**Query Parameters:**
+
+- `onDuty` (optional): `true` | `false`
+
+```bash
+curl https://samruddhi-backend.onrender.com/hospitals/uuid/doctors?onDuty=true
 ```
 
 ---
@@ -262,7 +465,7 @@ curl -X POST http://localhost:3000/consent/revoke \
   -d '{"consentId":"..."}'
 ```
 
-```
+````
 
 ### Consent Requests (Workflow)
 
@@ -278,7 +481,7 @@ Doctor requests consent from patient.
   "scope": ["prescriptions", "test_reports"],
   "purpose": "Follow-up consultation"
 }
-```
+````
 
 #### `GET /consent/requests/my`
 
@@ -290,10 +493,11 @@ Patient views their pending and past requests.
 Patient approves request.
 **Auth:** Patient only
 **Effects:**
+
 - Generates Consent Token
 - Stores in Redis
 - Updates request status to 'approved'
-**Returns:** `{ success: true, consentToken: "..." }`
+  **Returns:** `{ success: true, consentToken: "..." }`
 
 #### `POST /consent/requests/:id/deny`
 
@@ -303,199 +507,267 @@ Patient denies request.
 
 ---
 
-## 📋 Patient EHR Endpoints
+## 📋 Patient EHR Endpoints (MongoDB)
 
-**All EHR endpoints require:**
+**Storage:** All patient medical records stored in MongoDB `ehr_records` collection
 
-1. `Authorization: Bearer <staff_jwt>` - Staff authentication (Supabase Auth)
-2. `X-Consent-Token: <consent_jwt>` - Valid consent token from patient
-3. Consent must include required scope for the resource
-
----
-
-### Read Endpoints
-
-#### `GET /ehr/patient/:id`
-
-Get complete patient EHR (filtered by consent scopes)
-**Headers:**
-
-- `Authorization: Bearer <staff_jwt>`
-- `X-Consent-Token: <consent_jwt>`
-
-**Returns:** All data patient consented to share
-
-```bash
-curl http://localhost:3000/ehr/patient/patient-uuid \
-  -H "Authorization: Bearer staff-jwt" \
-  -H "X-Consent-Token: consent-jwt"
-```
-
-#### `GET /ehr/patient/:id/prescriptions`
-
-Get all prescriptions (requires `prescriptions` scope)
-
-```bash
-curl http://localhost:3000/ehr/patient/patient-uuid/prescriptions \
-  -H "Authorization: Bearer staff-jwt" \
-  -H "X-Consent-Token: consent-jwt"
-```
-
-#### `GET /ehr/patient/:id/test-reports`
-
-Get all test reports (requires `test_reports` scope)
-
-```bash
-curl http://localhost:3000/ehr/patient/patient-uuid/test-reports \
-  -H "Authorization: Bearer staff-jwt" \
-  -H "X-Consent-Token: consent-jwt"
-```
-
-#### `GET /ehr/patient/:id/medical-history`
-
-Get medical history (requires `medical_history` scope)
-
-```bash
-curl http://localhost:3000/ehr/patient/patient-uuid/medical-history \
-  -H "Authorization: Bearer staff-jwt" \
-  -H "X-Consent-Token: consent-jwt"
-```
-
-#### `GET /ehr/patient/:id/iot/:deviceType`
-
-Get IoT device logs (requires `iot_devices` scope)
-**Device Types:** `heart_rate`, `glucose`, `blood_pressure`, `spo2`, `temperature`
-
-```bash
-curl http://localhost:3000/ehr/patient/patient-uuid/iot/heart_rate \
-  -H "Authorization: Bearer staff-jwt" \
-  -H "X-Consent-Token: consent-jwt"
-```
-
----
-
-### Write Endpoints
-
-#### `POST /ehr/patient/:id/prescription`
-
-Add prescription (requires `prescriptions` scope)
-**Headers:** Authorization + X-Consent-Token
-**Body:**
+**Document Structure:**
 
 ```json
 {
-  "date": "2025-11-17",
-  "doctor_name": "Dr. Sharma",
-  "hospital_name": "Apollo Mumbai",
-  "medications": [
+  "patient_id": "uuid",
+  "abha_id": "1234-5678-9012",
+  "profile": {
+    "name": "John Doe",
+    "date_of_birth": "1990-01-15",
+    "gender": "male",
+    "blood_group": "O+",
+    "phone": "+91-9876543210",
+    "address": "Mumbai, India"
+  },
+  "prescriptions": [
     {
-      "name": "Amoxicillin",
-      "dosage": "500mg",
-      "frequency": "3 times daily",
-      "duration": "7 days",
-      "notes": "Take with food"
+      "id": "prescription-id",
+      "medication": "Paracetamol 500mg",
+      "dosage": "1 tablet",
+      "frequency": "Twice daily",
+      "duration": "5 days",
+      "prescribed_by": "Dr. Rajesh Kumar",
+      "hospital_name": "KEM Hospital",
+      "date": "2025-11-29",
+      "notes": "Take after meals",
+      "added_by": "doctor",
+      "created_at": "2025-11-29T10:30:00.000Z"
     }
   ],
-  "diagnosis": "Bacterial infection",
-  "pdf_url": "https://storage.example.com/prescription.pdf",
-  "parsed_data": {
-    "medicines": ["Amoxicillin"],
-    "dosage": ["500mg"],
-    "duration": ["7 days"]
+  "medical_history": [
+    {
+      "date": "2024-05-10",
+      "condition": "Hypertension",
+      "treatment": "ACE inhibitors",
+      "doctor_name": "Dr. Sharma",
+      "hospital_name": "Previous Hospital"
+    }
+  ],
+  "test_reports": [
+    {
+      "id": "report-id",
+      "test_name": "Complete Blood Count",
+      "date": "2025-11-20",
+      "lab_name": "Path Labs",
+      "results": {...},
+      "pdf_url": "https://..."
+    }
+  ],
+  "iot_devices": [
+    {
+      "device_type": "fitness_band",
+      "device_id": "fitband-001",
+      "logs": [
+        {
+          "timestamp": "2025-11-29T08:00:00.000Z",
+          "data": {
+            "heart_rate": 75,
+            "steps": 8432,
+            "calories": 342,
+            "sleep_hours": 7.5
+          }
+        }
+      ]
+    }
+  ],
+  "created_at": "2025-11-01T00:00:00.000Z",
+  "updated_at": "2025-11-29T10:30:00.000Z"
+}
+```
+
+### Patient Self-Service (Own EHR) - **Requires Auth**
+
+#### `GET /ehr/my/profile`
+
+View own profile (Requires: Patient JWT token)
+
+**Headers:**
+
+```
+Authorization: Bearer <patient_jwt_token>
+```
+
+**Response:**
+
+```json
+{
+  "patientId": "uuid",
+  "profile": {
+    "name": "John Doe",
+    "date_of_birth": "1990-01-15",
+    "gender": "male",
+    "blood_group": "O+",
+    "phone": "+91-9876543210"
   }
 }
 ```
 
 ```bash
-curl -X POST http://localhost:3000/ehr/patient/patient-uuid/prescription \
-  -H "Authorization: Bearer staff-jwt" \
-  -H "X-Consent-Token: consent-jwt" \
-  -H "Content-Type: application/json" \
-  -d '{...}'
+curl https://samruddhi-backend.onrender.com/ehr/my/profile \
+  -H "Authorization: Bearer <token>"
 ```
 
-#### `POST /ehr/patient/:id/test-report`
+#### `GET /ehr/my/prescriptions`
 
-Add test report (requires `test_reports` scope)
-**Body:**
+View own prescriptions from MongoDB (Requires: Patient JWT token)
+
+**Response:**
 
 ```json
 {
-  "test_name": "Complete Blood Count",
-  "date": "2025-11-17",
-  "lab_name": "Path Labs",
-  "doctor_name": "Dr. Patel",
-  "pdf_url": "https://storage.example.com/report.pdf",
-  "parsed_results": {
-    "hemoglobin": "14.5 g/dL",
-    "wbc": "8000 /cumm",
-    "platelets": "250000 /cumm"
-  },
-  "notes": "All values within normal range"
+  "prescriptions": [
+    {
+      "id": "prescription-id",
+      "medication": "Paracetamol 500mg",
+      "dosage": "1 tablet",
+      "frequency": "Twice daily",
+      "duration": "5 days",
+      "prescribed_by": "Dr. Rajesh Kumar",
+      "hospital_name": "KEM Hospital",
+      "date": "2025-11-29",
+      "notes": "Take after meals",
+      "added_by": "doctor",
+      "created_at": "2025-11-29T10:30:00.000Z"
+    }
+  ]
 }
 ```
 
 ```bash
-curl -X POST http://localhost:3000/ehr/patient/patient-uuid/test-report \
-  -H "Authorization: Bearer staff-jwt" \
-  -H "X-Consent-Token: consent-jwt" \
-  -H "Content-Type: application/json" \
-  -d '{...}'
+curl https://samruddhi-backend.onrender.com/ehr/my/prescriptions \
+  -H "Authorization: Bearer <token>"
 ```
 
-#### `POST /ehr/patient/:id/iot-log`
+#### `POST /ehr/my/prescription`
 
-Add IoT device reading (requires `iot_devices` scope)
+Add old prescription from another hospital (Requires: Patient JWT token)
+
 **Body:**
 
 ```json
 {
-  "device_type": "heart_rate",
-  "device_id": "fitbit-12345",
-  "value": 72,
-  "unit": "bpm",
-  "context": "resting"
+  "medication": "Amoxicillin 250mg",
+  "dosage": "1 capsule",
+  "frequency": "Three times daily",
+  "duration": "7 days",
+  "prescribed_by": "Dr. External Doctor",
+  "hospital_name": "Previous Hospital",
+  "date": "2024-10-15",
+  "notes": "Old prescription from previous treatment"
 }
 ```
 
-**Device Types:**
-
-- `heart_rate` - BPM readings
-- `glucose` - Blood sugar in mg/dL
-- `blood_pressure` - Systolic/diastolic
-- `spo2` - Oxygen saturation %
-- `temperature` - Body temp in °C/°F
-
 ```bash
-curl -X POST http://localhost:3000/ehr/patient/patient-uuid/iot-log \
-  -H "Authorization: Bearer staff-jwt" \
-  -H "X-Consent-Token: consent-jwt" \
+curl -X POST https://samruddhi-backend.onrender.com/ehr/my/prescription \
+  -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"device_type":"heart_rate","device_id":"...","value":72,"unit":"bpm"}'
+  -d '{...}'
 ```
 
-#### `POST /ehr/patient/:id/medical-history`
+#### `GET /ehr/my/medical-history`
 
-Add medical history entry (requires `medical_history` scope)
+View own medical history (Requires: Patient JWT token)
+
+```bash
+curl https://samruddhi-backend.onrender.com/ehr/my/medical-history \
+  -H "Authorization: Bearer <token>"
+```
+
+#### `GET /ehr/my/test-reports`
+
+View own test reports (Requires: Patient JWT token)
+
+```bash
+curl https://samruddhi-backend.onrender.com/ehr/my/test-reports \
+  -H "Authorization: Bearer <token>"
+```
+
+#### `POST /ehr/my/iot/:deviceType`
+
+Log IoT device data (Requires: Patient JWT token)
+
+**Device Types:** `fitness_band`, `glucose_monitor`, `bp_monitor`, `pulse_oximeter`
+
 **Body:**
 
 ```json
 {
-  "date": "2025-01-15",
-  "condition": "Hypertension",
-  "treatment": "Prescribed ACE inhibitors",
-  "notes": "Patient responded well to treatment",
-  "doctor_name": "Dr. Kumar",
-  "hospital_name": "AIIMS Delhi"
+  "device_id": "fitband-001",
+  "timestamp": "2025-11-29T08:00:00.000Z",
+  "data": {
+    "heart_rate": 75,
+    "steps": 8432,
+    "calories": 342,
+    "sleep_hours": 7.5
+  }
 }
 ```
 
 ```bash
-curl -X POST http://localhost:3000/ehr/patient/patient-uuid/medical-history \
-  -H "Authorization: Bearer staff-jwt" \
-  -H "X-Consent-Token: consent-jwt" \
+curl -X POST https://samruddhi-backend.onrender.com/ehr/my/iot/fitness_band \
+  -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{...}'
+```
+
+### Doctor/Hospital Access (With Consent) - **Requires Auth + Consent**
+
+#### `POST /ehr/patient/:id/prescription`
+
+Doctor adds prescription to patient EHR
+
+**Headers:**
+
+- `Authorization: Bearer <doctor_jwt_token>`
+- `X-Consent-Token: <consent_jwt>` (if consent system active)
+
+**Body:**
+
+```json
+{
+  "medication": "Paracetamol 500mg",
+  "dosage": "1 tablet",
+  "frequency": "Twice daily",
+  "duration": "5 days",
+  "prescribed_by": "Dr. Rajesh Kumar",
+  "hospital_name": "KEM Hospital",
+  "date": "2025-11-29",
+  "notes": "Take after meals"
+}
+```
+
+```bash
+curl -X POST https://samruddhi-backend.onrender.com/ehr/patient/uuid/prescription \
+  -H "Authorization: Bearer <doctor_token>" \
+  -H "X-Consent-Token: <consent_token>" \
+  -H "Content-Type: application/json" \
+  -d '{...}'
+```
+
+#### `GET /ehr/patient/:id`
+
+Doctor views patient EHR (with consent)
+
+```bash
+curl https://samruddhi-backend.onrender.com/ehr/patient/uuid \
+  -H "Authorization: Bearer <doctor_token>" \
+  -H "X-Consent-Token: <consent_token>"
+```
+
+#### `GET /ehr/patient/:id/prescriptions`
+
+Doctor views patient prescriptions (with consent)
+
+```bash
+curl https://samruddhi-backend.onrender.com/ehr/patient/uuid/prescriptions \
+  -H "Authorization: Bearer <doctor_token>" \
+  -H "X-Consent-Token: <consent_token>"
 ```
 
 ---
@@ -625,3 +897,175 @@ MONGO_URI=mongodb+srv://...
 JWT_SECRET=your-secret-key
 PORT=3000
 ```
+
+---
+
+## 🚀 Complete User Flow Examples
+
+### 1. Patient Registration & Profile View
+
+```bash
+# Register new patient
+RESPONSE=$(curl -X POST https://samruddhi-backend.onrender.com/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john.doe@example.com",
+    "password": "SecurePass@123",
+    "role": "patient",
+    "patientData": {
+      "name": "John Doe",
+      "dateOfBirth": "1990-01-15",
+      "gender": "male",
+      "bloodGroup": "O+",
+      "phoneNumber": "+91-9876543210",
+      "address": "Mumbai, India"
+    }
+  }')
+
+# Extract token
+TOKEN=$(echo $RESPONSE | jq -r '.token')
+PATIENT_ID=$(echo $RESPONSE | jq -r '.patientId')
+
+# View own profile
+curl https://samruddhi-backend.onrender.com/ehr/my/profile \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 2. Patient Views Hospitals & Checks Bed Availability
+
+```bash
+# List all hospitals
+curl https://samruddhi-backend.onrender.com/hospitals
+
+# Check specific hospital capacity
+curl https://samruddhi-backend.onrender.com/hospitals/<hospital-id>/capacity
+
+# View detailed dashboard
+curl https://samruddhi-backend.onrender.com/hospitals/<hospital-id>/dashboard
+```
+
+### 3. Patient Adds Old Prescription
+
+```bash
+curl -X POST https://samruddhi-backend.onrender.com/ehr/my/prescription \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "medication": "Amoxicillin 250mg",
+    "dosage": "1 capsule",
+    "frequency": "Three times daily",
+    "duration": "7 days",
+    "prescribed_by": "Dr. Previous Doctor",
+    "hospital_name": "Old Hospital",
+    "date": "2024-10-15",
+    "notes": "From previous treatment"
+  }'
+```
+
+### 4. Doctor Login & Add Prescription to Patient
+
+```bash
+# Doctor login
+DOC_RESPONSE=$(curl -X POST https://samruddhi-backend.onrender.com/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "rajesh.kumar@kem.edu",
+    "password": "Doctor@123"
+  }')
+
+DOC_TOKEN=$(echo $DOC_RESPONSE | jq -r '.token')
+
+# Doctor adds prescription to patient
+curl -X POST https://samruddhi-backend.onrender.com/ehr/patient/$PATIENT_ID/prescription \
+  -H "Authorization: Bearer $DOC_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "medication": "Paracetamol 500mg",
+    "dosage": "1 tablet",
+    "frequency": "Twice daily",
+    "duration": "5 days",
+    "prescribed_by": "Dr. Rajesh Kumar",
+    "hospital_name": "KEM Hospital",
+    "date": "2025-11-29",
+    "notes": "Take after meals"
+  }'
+```
+
+### 5. Patient Views All Prescriptions (MongoDB)
+
+```bash
+curl https://samruddhi-backend.onrender.com/ehr/my/prescriptions \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
+## 📊 Key Features
+
+### ✅ What's Working
+
+1. **Public Auth Endpoints** - Single-step registration and login (no JWT needed initially)
+2. **Patient EHR in MongoDB** - All medical records stored patient-wise in `ehr_records` collection
+3. **Prescription Management** - Patients can view and add their own prescriptions
+4. **Doctor Prescription Access** - Doctors can add prescriptions to patient records
+5. **Hospital Dashboard** - Real-time bed availability with occupancy percentage
+6. **IoT Device Logging** - Fitness bands and health monitors data storage
+7. **Medical History** - Comprehensive patient medical history tracking
+8. **Bed Occupancy Calculation** - Percentage-based availability display
+
+### 📍 MongoDB Collections
+
+- **`ehr_records`** - Patient medical records (one document per patient)
+  - `patient_id` - Links to PostgreSQL patients table
+  - `profile` - Basic patient information
+  - `prescriptions[]` - Array of prescription objects
+  - `medical_history[]` - Array of medical history entries
+  - `test_reports[]` - Array of test report objects
+  - `iot_devices[]` - Array of IoT device logs
+
+---
+
+## 🏥 Current Hospital Data (Production)
+
+After running the clean seed script:
+
+1. **King Edward Memorial (KEM) Hospital** - Government, 1800 beds, 200 ICU
+2. **Lokmanya Tilak Municipal General Hospital (Sion)** - Government, 1400 beds, 150 ICU
+3. **Lilavati Hospital & Research Centre** - Private, 323 beds, 65 ICU
+4. **Hinduja Hospital** - Private, 450 beds, 85 ICU
+5. **Breach Candy Hospital** - Private, 225 beds, 45 ICU
+
+**Total:** 5 hospitals, 19 departments, 200 beds, 9 doctors, 10 patients
+
+---
+
+## 🔄 Data Flow Summary
+
+```
+Patient Registration → Supabase Auth User Created
+                    → Patient Record in PostgreSQL (patients table)
+                    → EHR Document in MongoDB (ehr_records collection)
+
+Patient Views Profile → JWT Auth → MongoDB ehr_records lookup
+
+Doctor Adds Prescription → JWT Auth → MongoDB $push to ehr.prescriptions[]
+
+Patient Views Prescriptions → JWT Auth → MongoDB query ehr.prescriptions
+
+Hospital Capacity → PostgreSQL aggregation → Bed occupancy %
+```
+
+---
+
+## 📞 Support & Testing
+
+**Production URL:** https://samruddhi-backend.onrender.com
+
+**Health Check:** https://samruddhi-backend.onrender.com/health/live
+
+**Test Script:** Run `node scripts/test_complete_user_flow.js` for end-to-end testing
+
+---
+
+*Last Updated: November 29, 2025*
+*Version: 2.0 - Public Auth + MongoDB EHR + Bed Occupancy*
