@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: samruddhi-backend
+    runtime: docker
+    plan: free # Change to 'starter' or higher for production
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: LOG_LEVEL
+        value: info
+      # Supabase - Add these from Render Dashboard
+      - key: SUPABASE_URL
+        sync: false # Set manually in Render dashboard
+      - key: SUPABASE_SERVICE_ROLE
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      # Redis (Upstash) - Add these from Render Dashboard
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      # MongoDB Atlas - Add from Render Dashboard
+      - key: MONGO_URI
+        sync: false
+      # JWT Secret for consent tokens - Generate a random string
+      - key: JWT_SECRET
+        generateValue: true # Render will auto-generate
+      # ML Service (if deploying separately)
+      - key: ML_SERVICE_URL
+        value: http://localhost:8000 # Update if ML service deployed separately
