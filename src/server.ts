@@ -18,7 +18,12 @@ import crypto from 'crypto';
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+  origin: '*', // Allow all origins
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
 app.use(helmet());
 app.use(pinoHttp({ logger }));
 

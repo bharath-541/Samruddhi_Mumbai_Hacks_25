@@ -49,6 +49,26 @@ async function testMLModelDataEndpoints() {
                     console.log(`   Ready for prediction: ${singleData.ready_for_prediction}`);
                     console.log('\n   Model Data:');
                     console.log(JSON.stringify(singleData.model_data, null, 2));
+
+                    // Test 3: Predict Bed Demand
+                    console.log(`\n🤖 Test 3: POST /ml/predict/${firstHospitalId} (ML Prediction)`);
+                    const predictRes = await fetch(`${BASE_URL}/ml/predict/${firstHospitalId}`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${TOKEN}` }
+                    });
+
+                    if (predictRes.ok) {
+                        const predictData = await predictRes.json();
+                        console.log('✅ PREDICTION SUCCESS!');
+                        console.log(`   Predicted Demand: ${predictData.prediction.predicted_bed_demand}`);
+                        console.log(`   Confidence: ${(predictData.prediction.confidence * 100).toFixed(1)}%`);
+                        console.log(`   Alert Level: ${predictData.alert_level}`);
+                        console.log(`   Recommendation: ${predictData.recommendation}`);
+                    } else {
+                        const error = await predictRes.json();
+                        console.log('❌ Prediction Failed:', predictRes.status, error);
+                    }
+
                 } else {
                     const error = await singleRes.json();
                     console.log('❌ Failed:', singleRes.status, error);

@@ -1,6 +1,6 @@
 -- Create consent_requests table
 CREATE TABLE IF NOT EXISTS consent_requests (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     patient_id UUID NOT NULL REFERENCES patients(id),
     doctor_id UUID NOT NULL REFERENCES doctors(id),
     hospital_id UUID NOT NULL REFERENCES hospitals(id),

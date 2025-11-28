@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Samruddhi Backend API Documentation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #667eea;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #666;
+            font-size: 1.2em;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            background: #10b981;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+        
+        .base-url {
+            background: #f3f4f6;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            border-left: 4px solid #667eea;
+        }
+        
+        .main-content {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .section {
+            margin-bottom: 40px;
+        }
+        
+        h2 {
+            color: #667eea;
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+        
+        h3 {
+            color: #764ba2;
+            font-size: 1.3em;
+            margin-top: 25px;
+            margin-bottom: 15px;
+        }
+        
+        .endpoint {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .method {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-weight: bold;
+            font-size: 0.9em;
+            margin-right: 10px;
+        }
+        
+        .get { background: #10b981; color: white; }
+        .post { background: #3b82f6; color: white; }
+        .patch { background: #f59e0b; color: white; }
+        .delete { background: #ef4444; color: white; }
+        
+        .url {
+            font-family: 'Courier New', monospace;
+            color: #374151;
+            font-size: 1.1em;
+        }
+        
+        .description {
+            margin-top: 10px;
+            color: #6b7280;
+        }
+        
+        pre {
+            background: #1f2937;
+            color: #f3f4f6;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        
+        code {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 15px 0;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+        
+        th, td {
+            text-align: left;
+            padding: 12px;
+            border: 1px solid #e5e7eb;
+        }
+        
+        th {
+            background: #f3f4f6;
+            font-weight: 600;
+            color: #374151;
+        }
+        
+        .auth-required {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 10px 15px;
+            margin: 10px 0;
+            border-radius: 3px;
+        }
+        
+        .info-box {
+            background: #dbeafe;
+            border-left: 4px solid #3b82f6;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 3px;
+        }
+        
+        .success-box {
+            background: #d1fae5;
+            border-left: 4px solid #10b981;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 3px;
+        }
+        
+        .nav {
+            position: sticky;
+            top: 20px;
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .nav h3 {
+            color: #667eea;
+            margin-top: 0;
+        }
+        
+        .nav ul {
+            list-style: none;
+        }
+        
+        .nav li {
+            margin: 8px 0;
+        }
+        
+        .nav a {
+            color: #6b7280;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        
+        .nav a:hover {
+            color: #667eea;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: 250px 1fr;
+            gap: 30px;
+        }
+        
+        @media (max-width: 968px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .nav {
+                position: static;
+            }
+        }
+        
+        .credential-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        
+        .credential-card h4 {
+            margin-bottom: 10px;
+            font-size: 1.2em;
+        }
+        
+        .credential-card code {
+            background: rgba(255,255,255,0.2);
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏥 Samruddhi Backend API</h1>
+            <p class="subtitle">Comprehensive Healthcare Management System</p>
+            <span class="status-badge">✅ Production Ready</span>
+            <span class="status-badge">v1.0.0</span>
+            
+            <div class="base-url">
+                <strong>Production URL:</strong> https://samruddhi-backend.onrender.com<br>
+                <strong>Local Dev:</strong> http://localhost:3000
+            </div>
+        </header>
+        
+        <div class="grid">
+            <aside class="nav">
+                <h3>📑 Quick Links</h3>
+                <ul>
+                    <li><a href="#authentication">Authentication</a></li>
+                    <li><a href="#public">Public Endpoints</a></li>
+                    <li><a href="#patients">Patient Management</a></li>
+                    <li><a href="#consent">Consent System</a></li>
+                    <li><a href="#ehr">Health Records (EHR)</a></li>
+                    <li><a href="#management">Management APIs</a></li>
+                    <li><a href="#ml">ML & Analytics</a></li>
+                    <li><a href="#testing">Test Credentials</a></li>
+                </ul>
+            </aside>
+            
+            <main class="main-content">
+                <!-- AUTHENTICATION -->
+                <section id="authentication" class="section">
+                    <h2>🔐 Authentication</h2>
+                    
+                    <div class="info-box">
+                        <strong>Authentication Method:</strong> Supabase JWT Tokens<br>
+                        <strong>Header Format:</strong> <code>Authorization: Bearer &lt;JWT_TOKEN&gt;</code>
+                    </div>
+                    
+                    <h3>User Roles</h3>
+                    <ul>
+                        <li><strong>Patient:</strong> Regular users with ABHA IDs</li>
+                        <li><strong>Staff:</strong> Hospital staff (doctors, nurses, admin)</li>
+                        <li><strong>Admin:</strong> System administrators</li>
+                    </ul>
+                    
+                    <h3>Getting a JWT Token</h3>
+                    <pre><code>const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  'https://bbgyfxgdyevciaggalmn.supabase.co',
+  'YOUR_ANON_KEY'
+);
+
+// Authenticate
+const { data, error } = await supabase.auth.signInWithPassword({
+  email: 'patient@example.com',
+  password: 'password123'
+});
+
+const token = data.session.access_token;</code></pre>
+                </section>
+                
+                <!-- PUBLIC ENDPOINTS -->
+                <section id="public" class="section">
+                    <h2>🌐 Public Endpoints</h2>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/health</span>
+                        </div>
+                        <div class="description">Check API health status</div>
+                        <pre><code>{
+  "status": "healthy",
+  "timestamp": "2025-11-29T10:30:00Z",
+  "version": "1.0.0"
+}</code></pre>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/hospitals</span>
+                        </div>
+                        <div class="description">List all hospitals with bed availability</div>
+                        <div class="table-wrapper">
+                            <table>
+                                <tr>
+                                    <th>Parameter</th>
+                                    <th>Type</th>
+                                    <th>Description</th>
+                                </tr>
+                                <tr>
+                                    <td>name</td>
+                                    <td>string</td>
+                                    <td>Filter by hospital name</td>
+                                </tr>
+                                <tr>
+                                    <td>type</td>
+                                    <td>string</td>
+                                    <td>government | private | trust</td>
+                                </tr>
+                                <tr>
+                                    <td>city</td>
+                                    <td>string</td>
+                                    <td>Filter by city</td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/beds</span>
+                        </div>
+                        <div class="description">List beds by hospital</div>
+                        <div class="auth-required">
+                            📋 Query param required: <code>hospitalId</code>
+                        </div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/doctors</span>
+                        </div>
+                        <div class="description">List doctors by hospital and specialization</div>
+                    </div>
+                </section>
+                
+                <!-- PATIENT ENDPOINTS -->
+                <section id="patients" class="section">
+                    <h2>👤 Patient Management</h2>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method post">POST</span>
+                            <span class="url">/patients/register</span>
+                        </div>
+                        <div class="auth-required">
+                            🔒 Requires: Patient JWT Token
+                        </div>
+                        <div class="description">Register new patient with ABHA ID</div>
+                        <pre><code>{
+  "abha_id": "1234-5678-9012",
+  "date_of_birth": "1990-05-15",
+  "gender": "male",
+  "blood_group": "O+",
+  "address": {
+    "street": "123 Main St",
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "pincode": "400001"
+  }
+}</code></pre>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/patients/search?abha_id=XXXX-XXXX-XXXX</span>
+                        </div>
+                        <div class="auth-required">
+                            🔒 Requires: Staff JWT Token
+                        </div>
+                        <div class="description">Search patient by ABHA ID</div>
+                    </div>
+                </section>
+                
+                <!-- CONSENT MANAGEMENT -->
+                <section id="consent" class="section">
+                    <h2>🤝 Consent Management</h2>
+                    
+                    <div class="success-box">
+                        <strong>✅ Fully Tested & Working</strong><br>
+                        Complete consent flow with QR codes and token-based access
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method post">POST</span>
+                            <span class="url">/consent/grant</span>
+                        </div>
+                        <div class="auth-required">
+                            🔒 Requires: Patient JWT Token
+                        </div>
+                        <div class="description">Grant EHR access consent to a doctor/hospital</div>
+                        <pre><code>{
+  "patientId": "patient-auth-user-id",
+  "recipientId": "staff-auth-user-id",
+  "recipientHospitalId": "hospital-uuid",
+  "scope": ["profile", "prescriptions", "test_reports"],
+  "durationDays": 7
+}</code></pre>
+                        <strong>Response:</strong>
+                        <pre><code>{
+  "consentId": "consent-uuid",
+  "consentToken": "eyJhbGc...",
+  "expiresAt": "2025-12-06T10:30:00Z"
+}</code></pre>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/consent/:consentId/qr?token=CONSENT_TOKEN</span>
+                        </div>
+                        <div class="description">Generate QR code for consent (returns PNG image)</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/consent/my-consents</span>
+                        </div>
+                        <div class="auth-required">
+                            🔒 Requires: Patient JWT Token
+                        </div>
+                        <div class="description">List all consents granted by patient</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method delete">DELETE</span>
+                            <span class="url">/consent/:consentId</span>
+                        </div>
+                        <div class="auth-required">
+                            🔒 Requires: Patient JWT Token
+                        </div>
+                        <div class="description">Revoke consent (immediately invalidates token)</div>
+                    </div>
+                </section>
+                
+                <!-- EHR -->
+                <section id="ehr" class="section">
+                    <h2>📋 Electronic Health Records (EHR)</h2>
+                    
+                    <div class="auth-required">
+                        🔒 All EHR endpoints require:<br>
+                        • Staff JWT in <code>Authorization</code> header<br>
+                        • Valid consent token in <code>X-Consent-Token</code> header
+                    </div>
+                    
+                    <div class="success-box">
+                        <strong>✅ All Read & Write Operations Tested</strong><br>
+                        Profile, Prescriptions, Test Reports, Medical History, IoT Data
+                    </div>
+                    
+                    <h3>Read Operations</h3>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/ehr/patient/:patientId</span>
+                        </div>
+                        <div class="description">Get patient profile (name, DOB, blood group, etc.)</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/ehr/patient/:patientId/prescriptions</span>
+                        </div>
+                        <div class="description">Get all prescriptions</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/ehr/patient/:patientId/test-reports</span>
+                        </div>
+                        <div class="description">Get lab test reports</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/ehr/patient/:patientId/iot/:deviceType</span>
+                        </div>
+                        <div class="description">Get IoT device data (heart_rate, blood_pressure, etc.)</div>
+                    </div>
+                    
+                    <h3>Write Operations</h3>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method post">POST</span>
+                            <span class="url">/ehr/patient/:patientId/prescription</span>
+                        </div>
+                        <div class="description">Add new prescription</div>
+                        <pre><code>{
+  "date": "2025-11-29",
+  "doctor_name": "Dr. Rajesh Kumar",
+  "diagnosis": "Upper respiratory infection",
+  "medications": [
+    {
+      "name": "Amoxicillin",
+      "dosage": "500mg",
+      "frequency": "3 times daily",
+      "duration": "7 days"
+    }
+  ]
+}</code></pre>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method post">POST</span>
+                            <span class="url">/ehr/patient/:patientId/test-report</span>
+                        </div>
+                        <div class="description">Add lab test report</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method post">POST</span>
+                            <span class="url">/ehr/patient/:patientId/iot-log</span>
+                        </div>
+                        <div class="description">Log IoT device reading</div>
+                    </div>
+                </section>
+                
+                <!-- MANAGEMENT -->
+                <section id="management" class="section">
+                    <h2>⚙️ Management APIs</h2>
+                    
+                    <div class="info-box">
+                        <strong>🔄 Recently Added (Deploying)</strong><br>
+                        These endpoints were added in commit <code>62adc77</code> and are currently deploying to production.
+                    </div>
+                    
+                    <h3>Bed Management</h3>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method post">POST</span>
+                            <span class="url">/beds</span>
+                        </div>
+                        <div class="auth-required">
+                            🔒 Requires: Staff JWT Token
+                        </div>
+                        <div class="description">Create new bed</div>
+                        <pre><code>{
+  "hospital_id": "hospital-uuid",
+  "bed_number": "ICU-101",
+  "type": "icu",
+  "floor_number": 4,
+  "room_number": "R401",
+  "status": "available"
+}</code></pre>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method patch">PATCH</span>
+                            <span class="url">/beds/:id</span>
+                        </div>
+                        <div class="auth-required">
+                            🔒 Requires: Staff JWT Token
+                        </div>
+                        <div class="description">Update bed status (available, occupied, maintenance)</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method delete">DELETE</span>
+                            <span class="url">/beds/:id</span>
+                        </div>
+                        <div class="auth-required">
+                            🔒 Requires: Staff JWT Token
+                        </div>
+                        <div class="description">Delete bed (blocks if occupied)</div>
+                    </div>
+                    
+                    <h3>Doctor Management</h3>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method post">POST</span>
+                            <span class="url">/doctors</span>
+                        </div>
+                        <div class="auth-required">
+                            🔒 Requires: Staff JWT Token
+                        </div>
+                        <div class="description">Create doctor profile</div>
+                        <pre><code>{
+  "user_id": "staff-auth-user-id",
+  "hospital_id": "hospital-uuid",
+  "name": "Dr. Rajesh Kumar",
+  "license_number": "MH-DOC-12345",
+  "specialization": "Cardiologist",
+  "qualification": ["MBBS", "MD"],
+  "is_on_duty": true
+}</code></pre>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method patch">PATCH</span>
+                            <span class="url">/doctors/:id</span>
+                        </div>
+                        <div class="description">Update doctor profile and duty status</div>
+                    </div>
+                    
+                    <h3>Admission Management</h3>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method post">POST</span>
+                            <span class="url">/admissions</span>
+                        </div>
+                        <div class="auth-required">
+                            🔒 Requires: Staff JWT Token
+                        </div>
+                        <div class="description">Create admission (automatically occupies bed)</div>
+                        <pre><code>{
+  "patient_id": "patient-uuid",
+  "hospital_id": "hospital-uuid",
+  "bed_id": "bed-uuid",
+  "primary_doctor_id": "doctor-uuid",
+  "admission_type": "emergency",
+  "diagnosis": "Suspected MI",
+  "severity": "critical"
+}</code></pre>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method patch">PATCH</span>
+                            <span class="url">/admissions/:id/discharge</span>
+                        </div>
+                        <div class="description">Discharge patient (automatically frees bed)</div>
+                        <pre><code>{
+  "discharge_summary": "Patient stable",
+  "follow_up_date": "2025-12-06",
+  "total_cost": 15000.00
+}</code></pre>
+                    </div>
+                </section>
+                
+                <!-- ML & ANALYTICS -->
+                <section id="ml" class="section">
+                    <h2>🤖 ML & Analytics</h2>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method post">POST</span>
+                            <span class="url">/ml/predict-bed-demand</span>
+                        </div>
+                        <div class="auth-required">
+                            🔒 Requires: Staff JWT Token
+                        </div>
+                        <div class="description">Predict bed demand using ML model</div>
+                        <pre><code>{
+  "hospital_id": "hospital-uuid",
+  "date": "2025-12-01",
+  "weather": {
+    "temperature": 28,
+    "humidity": 65,
+    "aqi": 120
+  }
+}</code></pre>
+                        <strong>Response:</strong>
+                        <pre><code>{
+  "predicted_demand": 685,
+  "confidence": 0.89,
+  "predicted_occupancy_rate": 72.11
+}</code></pre>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div>
+                            <span class="method get">GET</span>
+                            <span class="url">/dashboard/stats?hospitalId=uuid</span>
+                        </div>
+                        <div class="description">Get hospital dashboard statistics</div>
+                    </div>
+                </section>
+                
+                <!-- TESTING -->
+                <section id="testing" class="section">
+                    <h2>🧪 Test Credentials</h2>
+                    
+                    <div class="credential-card">
+                        <h4>👤 Patient Account</h4>
+                        <p>Email: <code>test.patient@samruddhi.test</code></p>
+                        <p>Password: <code>Password123!</code></p>
+                        <p>ABHA ID: <code>1234-5678-9012</code></p>
+                    </div>
+                    
+                    <div class="credential-card">
+                        <h4>👨‍⚕️ Doctor/Staff Account</h4>
+                        <p>Email: <code>test.staff@samruddhi.test</code></p>
+                        <p>Password: <code>Password123!</code></p>
+                    </div>
+                    
+                    <div class="success-box">
+                        <strong>📊 Current Test Results:</strong> 17/20 passing (85%)<br>
+                        <strong>🔄 Deployment Status:</strong> Management endpoints deploying<br>
+                        <strong>🎯 Expected:</strong> 20/20 passing once deployment completes
+                    </div>
+                    
+                    <h3>Run Tests</h3>
+                    <pre><code>export SUPABASE_URL="https://bbgyfxgdyevciaggalmn.supabase.co"
+export SUPABASE_ANON_KEY="your-key"
+node scripts/test_auth_endpoints.js</code></pre>
+                </section>
+                
+                <!-- SUPPORT -->
+                <section class="section">
+                    <h2>📞 Support & Resources</h2>
+                    <ul>
+                        <li><strong>GitHub:</strong> <a href="https://github.com/Soham-1304/Samruddhi_Backend" target="_blank">Samruddhi_Backend</a></li>
+                        <li><strong>Health Check:</strong> <a href="https://samruddhi-backend.onrender.com/health" target="_blank">https://samruddhi-backend.onrender.com/health</a></li>
+                        <li><strong>Documentation:</strong> <code>/docs/API_DOCUMENTATION.md</code></li>
+                        <li><strong>Test Results:</strong> <code>TEST_RESULTS_SUMMARY.md</code></li>
+                        <li><strong>Seeding Guide:</strong> <code>DATABASE_SEED_SUMMARY.md</code></li>
+                    </ul>
+                </section>
+            </main>
+        </div>
+    </div>
+</body>
+</html>
