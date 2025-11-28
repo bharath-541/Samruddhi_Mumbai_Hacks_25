@@ -375,18 +375,16 @@ app.post('/auth/patient/signup', async (req, res) => {
 
     req.log.info({ patientId: patient.id, userId, abhaId: finalAbhaId }, 'Patient registered successfully');
 
-    // Return success with auth session (user can login immediately)
+    // Return success - user needs to login separately to get JWT token
     return res.status(201).json({
-      message: 'Patient registered successfully',
+      success: true,
+      message: 'Registration successful. Please login to continue.',
       patient: {
         id: patient.id,
         abha_id: finalAbhaId,
         name,
         email
-      },
-      user_id: userId,
-      // Note: Frontend should now call supabase.auth.signInWithPassword(email, password) to get session
-      next_step: 'Call supabase.auth.signInWithPassword() to get JWT token'
+      }
     });
 
   } catch (error: any) {
