@@ -200,6 +200,199 @@ app.get('/health/ready', async (_req, res) => {
 // AUTHENTICATION ENDPOINTS (Public - No Auth Required)
 // ============================================================================
 
+// Doctor/Staff Registration
+app.post('/auth/doctor/signup', async (req, res) => {
+  const parsed = z.object({
+    email: z.string().email(),
+    password: z.string().min(8),
+    name: z.string().min(1),
+    hospitalId: z.string().uuid('Hospital ID must be a valid UUID'),
+    specialization: z.string().optional(),
+    licenseNumber: z.string().optional(),
+    phone: z.string().optional()
+  }).safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { email, password, name, hospitalId, specialization, licenseNumber, phone } = parsed.data;
+
+  try {
+    // Step 1: Verify hospital exists
+    const { data: hospital, error: hospitalError } = await supabase
+      .from('hospitals')
+      .select('id, name')
+      .eq('id', hospitalId)
+      .single();
+
+    if (hospitalError || !hospital) {
+      return res.status(404).json({ error: 'Hospital not found' });
+    }
+
+    // Step 2: Create Supabase Auth user
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        role: 'doctor',
+        hospital_id: hospitalId,
+        name
+      }
+    });
+
+    if (authError) {
+      req.log.error({ err: authError }, 'Doctor auth user creation failed');
+      if (authError.message.includes('already registered')) {
+        return res.status(409).json({ error: 'Email already registered' });
+      }
+      return res.status(500).json({ error: 'Failed to create doctor account' });
+    }
+
+    const userId = authData.user.id;
+
+    // Step 3: Create doctor record in database
+    const { data: doctor, error: doctorError } = await supabase
+      .from('doctors')
+      .insert({
+        user_id: userId,
+        hospital_id: hospitalId,
+        name,
+        specialization: specialization || null,
+        license_number: licenseNumber || null,
+        phone: phone || null,
+        is_on_duty: true
+      })
+      .select()
+      .single();
+
+    if (doctorError) {
+      // Rollback: delete auth user if doctor record creation fails
+      await supabase.auth.admin.deleteUser(userId);
+      req.log.error({ err: doctorError }, 'Doctor record creation failed');
+      return res.status(500).json({ error: 'Doctor registration failed' });
+    }
+
+    // Step 4: Update user metadata with doctor_id
+    const { error: metadataError } = await supabase.auth.admin.updateUserById(
+      userId,
+      {
+        user_metadata: {
+          doctor_id: doctor.id,
+          role: 'doctor',
+          hospital_id: hospitalId
+        }
+      }
+    );
+
+    if (metadataError) {
+      req.log.warn({ err: metadataError }, 'Failed to update doctor metadata (non-critical)');
+    }
+
+    req.log.info({ doctorId: doctor.id, userId, hospitalId }, 'Doctor registered successfully');
+
+    return res.status(201).json({
+      success: true,
+      message: 'Registration successful. Please login to continue.',
+      doctor: {
+        id: doctor.id,
+        name,
+        email,
+        hospitalId,
+        hospitalName: hospital.name,
+        specialization
+      }
+    });
+
+  } catch (error: any) {
+    req.log.error({ err: error }, 'Doctor signup failed');
+    return res.status(500).json({ error: 'Registration failed', details: error.message });
+  }
+});
+
+// Doctor/Staff Login
+app.post('/auth/doctor/login', async (req, res) => {
+  const parsed = z.object({
+    email: z.string().email(),
+    password: z.string()
+  }).safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { email, password } = parsed.data;
+
+  try {
+    // Step 1: Authenticate with Supabase
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error || !data.user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Step 2: Verify user is a doctor
+    const role = data.user.user_metadata?.role;
+    if (role !== 'doctor') {
+      return res.status(403).json({ error: 'This endpoint is for hospital staff only' });
+    }
+
+    // Step 3: Fetch doctor record
+    const { data: doctor, error: doctorError } = await supabase
+      .from('doctors')
+      .select(`
+        id,
+        name,
+        specialization,
+        license_number,
+        phone,
+        is_on_duty,
+        hospital:hospitals(id, name, city, state)
+      `)
+      .eq('user_id', data.user.id)
+      .single();
+
+    if (doctorError || !doctor) {
+      req.log.error({ err: doctorError }, 'Doctor record not found');
+      return res.status(404).json({ error: 'Doctor profile not found' });
+    }
+
+    return res.status(200).json({
+      message: 'Login successful',
+      user: {
+        id: data.user.id,
+        email: data.user.email,
+        role: 'doctor',
+        hospitalId: data.user.user_metadata?.hospital_id,
+        doctorId: doctor.id
+      },
+      doctor: {
+        id: doctor.id,
+        name: doctor.name,
+        specialization: doctor.specialization,
+        licenseNumber: doctor.license_number,
+        phone: doctor.phone,
+        isOnDuty: doctor.is_on_duty,
+        hospital: doctor.hospital
+      },
+      session: {
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+        expires_at: data.session.expires_at
+      },
+      note: 'Store access_token and use as: Authorization: Bearer <access_token>'
+    });
+
+  } catch (error: any) {
+    req.log.error({ err: error }, 'Doctor login error');
+    return res.status(500).json({ error: 'Login failed', details: error.message });
+  }
+});
+
 // Patient Login - Returns patient data if login successful
 app.post('/auth/patient/login', async (req, res) => {
   const parsed = z.object({

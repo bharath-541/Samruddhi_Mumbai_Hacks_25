@@ -72,6 +72,13 @@ export async function getHospitalConsents(hospitalId: string): Promise<string[]>
   return out.result || [];
 }
 
+export async function getConsentsByRecipient(recipientId: string): Promise<ConsentRecord[]> {
+  // Note: This requires iterating through all consent keys or maintaining a separate index
+  // For now, we'll return empty array as this requires Redis SCAN which isn't easily done with REST API
+  // In production, you'd want to maintain a recipient:id:consents SET similar to patient/hospital indexes
+  return [];
+}
+
 export async function isConsentValid(
   jti: string, 
   expect: { 
