@@ -375,7 +375,24 @@ app.post('/auth/patient/signup', async (req, res) => {
 
     req.log.info({ patientId: patient.id, userId, abhaId: finalAbhaId }, 'Patient registered successfully');
 
-    // Return success - user needs to login separately to get JWT token
+    // Step 5: Update Supabase Auth user metadata with patient_id
+    // This is CRITICAL - without this, patient cannot access /ehr/my/* endpoints
+    const { error: metadataError } = await supabase.auth.admin.updateUserById(
+      userId,
+      {
+        user_metadata: {
+          patient_id: patient.id,
+          role: 'patient',
+          abha_id: finalAbhaId
+        }
+      }
+    );
+
+    if (metadataError) {
+      req.log.warn({ err: metadataError }, 'Failed to update user metadata (non-critical)');
+    }
+
+    // Return success with auth session (user can login immediately)
     return res.status(201).json({
       success: true,
       message: 'Registration successful. Please login to continue.',
@@ -393,137 +410,6 @@ app.post('/auth/patient/signup', async (req, res) => {
   }
 });
 
-// Patient Registration (called after Supabase Auth signup) - DEPRECATED, use /auth/patient/signup instead
-app.post('/patients/register', requireAuth, async (req, res) => {
-  // Auth check handled by middleware
-  const userId = (req as AuthenticatedRequest).user?.id;
-  const userEmail = (req as AuthenticatedRequest).user?.email;
-
-  if (!userId || !userEmail) {
-    return res.status(401).json({ error: 'Could not identify user from token' });
-  }
-
-  const parsed = PatientRegistrationSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
-
-  let { abhaId, name, dob, gender, bloodGroup, phone, emergencyContact, address } = parsed.data;
-
-  try {
-    // Auto-generate ABHA-like ID if not provided
-    if (!abhaId) {
-      const timestamp = Date.now().toString().slice(-8);
-      const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-      abhaId = `AUTO-${timestamp}-${random}`;
-      req.log.info({ userId, generatedAbhaId: abhaId }, 'Auto-generated ABHA ID');
-    }
-
-    // Check if ABHA ID already exists (only if provided)
-    if (abhaId && !abhaId.startsWith('AUTO-')) {
-      const { data: existing } = await supabase
-        .from('patients')
-        .select('id')
-        .eq('abha_id', abhaId)
-        .maybeSingle();
-
-      if (existing) {
-        return res.status(409).json({ error: 'ABHA ID already registered' });
-      }
-    }
-
-    // Check if user already has patient record
-    const { data: existingPatient } = await supabase
-      .from('patients')
-      .select('id')
-      .eq('ehr_id', userId)
-      .maybeSingle();
-
-    if (existingPatient) {
-      return res.status(409).json({ error: 'User already registered as patient' });
-    }
-
-    // Create patient record in Postgres (matching actual schema)
-    const { data: patient, error: insertError } = await supabase
-      .from('patients')
-      .insert({
-        ehr_id: userId, // Link to Supabase Auth user
-        abha_id: abhaId,
-        name_encrypted: name, // TODO: Encrypt in Phase 2, for now storing as text
-        dob_encrypted: dob,
-        gender,
-        blood_group: bloodGroup,
-        emergency_contact_encrypted: emergencyContact || null
-      })
-      .select()
-      .single();
-
-    if (insertError) {
-      req.log.error({ err: insertError }, 'Patient insert failed');
-      return res.status(500).json({ error: 'Patient registration failed' });
-    }
-
-    // Create initial EHR document in MongoDB
-    const { getMongo } = await import('./lib/mongo');
-    const db = await getMongo();
-    const ehrCollection = db.collection('ehr_records');
-
-    const ehrDoc = {
-      patient_id: patient.id,
-      abha_id: abhaId,
-      profile: {
-        name,
-        email: userEmail, // Store email from Supabase Auth
-        dob,
-        blood_group: bloodGroup || '',
-        phone: phone || null, // Optional
-        address
-      },
-      prescriptions: [],
-      test_reports: [],
-      medical_history: [],
-      iot_devices: [],
-      created_at: new Date(),
-      updated_at: new Date()
-    };
-
-    await ehrCollection.insertOne(ehrDoc);
-
-    // Update Supabase Auth user metadata with patient_id
-    // This allows subsequent requests to access patient endpoints without re-auth
-    const { error: metadataError } = await supabase.auth.admin.updateUserById(
-      userId,
-      {
-        user_metadata: {
-          patient_id: patient.id,
-          role: 'patient'
-        }
-      }
-    );
-
-    if (metadataError) {
-      req.log.warn({ err: metadataError }, 'Failed to update user metadata (non-critical)');
-    }
-
-    req.log.info({ patientId: patient.id, abhaId, email: userEmail }, 'Patient registered successfully');
-
-    res.status(201).json({
-      success: true,
-      patient: {
-        id: patient.id,
-        abha_id: abhaId,  // Fixed: return generated/provided ABHA ID
-        email: userEmail,
-        name,
-        createdAt: patient.created_at
-      },
-      ehrCreated: true,
-      message: 'Registration successful. Please refresh your token to access patient endpoints.'
-    });
-  } catch (e: any) {
-    req.log.error({ err: e }, 'Patient registration failed');
-    res.status(500).json({ error: 'Patient registration failed' });
-  }
-});
 
 // Search patient by ABHA ID or email (must come BEFORE /:id route)
 app.get('/patients/search', async (req, res) => {
@@ -2016,12 +1902,12 @@ app.get('/hospitals/:id/capacity', async (req, res) => {
       .single();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Hospital not found' });
-    
+
     // Calculate bed occupancy percentage
     const totalBeds = data.total_beds || data.capacity_summary?.total_beds || 0;
     const occupiedBeds = data.capacity_summary?.occupied_beds || 0;
     const bedOccupancy = totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0;
-    
+
     res.json({
       ...data,
       bedOccupancy
@@ -2405,7 +2291,7 @@ app.post('/ml/predict/:hospitalId', requireAuth, async (req, res) => {
 // Create new bed
 app.post('/beds', requireAuth, async (req, res) => {
   const authUser = (req as any).user;
-  
+
   const BedCreateSchema = z.object({
     hospital_id: z.string().uuid(),
     bed_number: z.string().min(1),
@@ -2465,7 +2351,7 @@ app.post('/beds', requireAuth, async (req, res) => {
 // Update bed status
 app.patch('/beds/:id', requireAuth, async (req, res) => {
   const bedId = req.params.id;
-  
+
   const BedUpdateSchema = z.object({
     status: z.enum(['available', 'occupied', 'maintenance', 'reserved']).optional(),
     floor: z.number().int().optional(),
@@ -2512,7 +2398,7 @@ app.delete('/beds/:id', requireAuth, async (req, res) => {
       .single();
 
     if (!bed) return res.status(404).json({ error: 'Bed not found' });
-    
+
     if (bed.status === 'occupied') {
       return res.status(400).json({ error: 'Cannot delete occupied bed' });
     }
@@ -2542,7 +2428,7 @@ app.delete('/beds/:id', requireAuth, async (req, res) => {
 // Create doctor profile
 app.post('/doctors', requireAuth, async (req, res) => {
   const authUser = (req as any).user;
-  
+
   const DoctorCreateSchema = z.object({
     user_id: z.string().uuid(), // Supabase auth user ID
     hospital_id: z.string().uuid(),
@@ -2608,7 +2494,7 @@ app.post('/doctors', requireAuth, async (req, res) => {
 // Update doctor profile
 app.patch('/doctors/:id', requireAuth, async (req, res) => {
   const doctorId = req.params.id;
-  
+
   const DoctorUpdateSchema = z.object({
     specialization: z.string().optional(),
     qualification: z.string().optional(),
@@ -2651,7 +2537,7 @@ app.patch('/doctors/:id', requireAuth, async (req, res) => {
 // Create admission
 app.post('/admissions', requireAuth, async (req, res) => {
   const authUser = (req as any).user;
-  
+
   const AdmissionCreateSchema = z.object({
     patient_id: z.string().uuid(),
     hospital_id: z.string().uuid(),
@@ -2727,7 +2613,7 @@ app.post('/admissions', requireAuth, async (req, res) => {
 // Discharge patient
 app.patch('/admissions/:id/discharge', requireAuth, async (req, res) => {
   const admissionId = req.params.id;
-  
+
   const DischargeSchema = z.object({
     discharge_summary: z.string().optional(),
     follow_up_instructions: z.string().optional(),
