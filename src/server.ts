@@ -730,6 +730,59 @@ app.get('/consent/status/:consentId', async (req, res) => {
   }
 });
 
+// Search patient by ABHA ID (for doctors to find patient ID)
+// Requires: Hospital staff authentication
+app.get('/patients/search/abha/:abhaId', requireAuth, requireHospitalStaff, async (req, res) => {
+  const { abhaId } = req.params;
+  const doctorUser = (req as any).user;
+
+  try {
+    // Search for patient by ABHA ID
+    const { data: patient, error } = await supabase
+      .from('patients')
+      .select('id, abha_id, name_encrypted, gender, blood_group, created_at')
+      .eq('abha_id', abhaId)
+      .maybeSingle();
+
+    if (error) {
+      req.log.error({ err: error }, 'Patient search failed');
+      return res.status(500).json({ error: 'Patient search failed' });
+    }
+
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    // Check if doctor has active consent to access this patient
+    const { getConsentsByRecipient } = await import('./lib/redis');
+    const consents = await getConsentsByRecipient(doctorUser.id);
+    
+    const hasConsent = consents?.some((c: any) => 
+      c.patientId === patient.id && 
+      !c.revoked && 
+      new Date(c.expiresAt) > new Date()
+    );
+
+    res.json({
+      patient: {
+        id: patient.id,
+        abha_id: patient.abha_id,
+        name: patient.name_encrypted,
+        gender: patient.gender,
+        blood_group: patient.blood_group,
+        created_at: patient.created_at
+      },
+      hasConsent,
+      message: hasConsent 
+        ? 'Patient found. You have active consent to access their records.' 
+        : 'Patient found. Request consent from patient to access their records.'
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, 'Patient search failed');
+    res.status(500).json({ error: 'Patient search failed' });
+  }
+});
+
 // Get patient's granted consents (requires patient auth)
 app.get('/consent/my', requireAuth, async (req, res) => {
   const authUser = (req as any).user;
@@ -1518,10 +1571,12 @@ app.post('/ehr/my/iot-log', requireAuth, async (req, res) => {
 
 // ============================================================================
 // DOCTOR ENDPOINTS (Doctor assigns data directly to patients)
+// NOTE: These use /ehr/doctor/patient/:id/* paths to avoid conflicts with consent-based endpoints
 // ============================================================================
 
 // Doctor adds prescription to patient record
-app.post('/ehr/patient/:id/prescription', requireAuth, requireHospitalStaff, async (req, res) => {
+// NOTE: This is the DOCTOR endpoint (requires hospital staff auth, no consent needed)
+app.post('/ehr/doctor/patient/:id/prescription', requireAuth, requireHospitalStaff, async (req, res) => {
   const user = (req as any).user;
   const patientId = req.params.id;
 
@@ -1578,7 +1633,8 @@ app.post('/ehr/patient/:id/prescription', requireAuth, requireHospitalStaff, asy
 });
 
 // Doctor adds test report to patient record
-app.post('/ehr/patient/:id/test-report', requireAuth, requireHospitalStaff, async (req, res) => {
+// NOTE: This is the DOCTOR endpoint (requires hospital staff auth, no consent needed)
+app.post('/ehr/doctor/patient/:id/test-report', requireAuth, requireHospitalStaff, async (req, res) => {
   const user = (req as any).user;
   const patientId = req.params.id;
 
@@ -1736,6 +1792,7 @@ app.get('/ehr/patient/:id/iot/:deviceType', requireConsent, async (req, res) => 
 });
 
 // EHR - Add prescription (requires 'prescriptions' scope + auth)
+// NOTE: This is the CONSENT-BASED endpoint (for third-party apps, requires consent token)
 app.post('/ehr/patient/:id/prescription', requireConsent, async (req, res) => {
   const patientId = req.params.id;
   const consentScopes = (req as any).consent?.scopes || [];
